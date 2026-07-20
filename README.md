@@ -43,3 +43,19 @@ sudo systemctl status meal-helper
 ```
 
 Email notices and Whole Foods cart automation are intentionally not part of this first local milestone; the finalized shopping-list data is ready for those integrations.
+
+## Production operations
+
+SSH can be used for remote diagnostics while keeping the development toolchain local:
+
+```bash
+ssh -i ~/.ssh/ancri -o IdentitiesOnly=yes ec2-user@INSTANCE_IP
+```
+
+To create a consistent online SQLite backup and download it into the ignored local `data/` directory:
+
+```bash
+MEAL_HELPER_HOST=INSTANCE_IP ./deploy/pull-production-db.sh
+```
+
+The helper uses SQLite's backup API, so the production service does not need to be stopped while copying data.

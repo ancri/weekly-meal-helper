@@ -6,3 +6,6 @@ data/*.sqlite3-*
 
 # Proprietary household warm-start data
 meals_history.xlsx
+
+# Generated deployment files may contain environment-specific configuration
+deploy/*.generated.*
