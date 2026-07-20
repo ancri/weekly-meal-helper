@@ -55,7 +55,10 @@ def compare_with_database(
                 inserted += 1
                 if apply:
                     connection.execute(
-                        "INSERT INTO ingredients(name, default_unit, whole_foods) VALUES (?, ?, ?)",
+                        """
+                        INSERT INTO ingredients(name, default_unit, whole_foods, updated_at)
+                        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                        """,
                         (name, unit, int(whole_foods)),
                     )
             elif existing["default_unit"] == unit and bool(existing["whole_foods"]) == whole_foods:

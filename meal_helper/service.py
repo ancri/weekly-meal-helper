@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import random
+import re
 import sqlite3
+import unicodedata
 from datetime import date, timedelta
 from typing import Any
 
@@ -457,13 +459,22 @@ class MealService:
             return [
                 dict(row)
                 for row in connection.execute(
-                    "SELECT * FROM ingredients WHERE name LIKE ? ORDER BY name COLLATE NOCASE LIMIT 200",
+                    """
+                    SELECT i.*, COUNT(DISTINCT ri.recipe_id) AS usage_count
+                    FROM ingredients i
+                    LEFT JOIN recipe_ingredients ri ON ri.ingredient_id = i.id
+                    WHERE i.name LIKE ?
+                    GROUP BY i.id
+                    ORDER BY i.name COLLATE NOCASE
+                    """,
                     (f"%{query.strip()}%",),
                 )
             ]
 
     def create_ingredient(self, payload: dict[str, Any]) -> dict[str, Any]:
         name = _clean_name(payload.get("name"), "Ingredient name")
+        if len(name) > 100:
+            raise ServiceError("Ingredient name must be 100 characters or fewer.")
         unit = payload.get("default_unit", "pieces")
         if unit not in ALLOWED_UNITS:
             raise ServiceError("Choose a valid default unit.")
@@ -471,14 +482,107 @@ class MealService:
         with self.database.transaction() as connection:
             try:
                 cursor = connection.execute(
-                    "INSERT INTO ingredients(name, whole_foods, default_unit) VALUES (?, ?, ?)",
-                    (name, whole_foods, unit),
+                    """
+                    INSERT INTO ingredients(name, whole_foods, default_unit, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (name, whole_foods, unit, utc_now()),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ServiceError("An ingredient with that name already exists.") from exc
             return dict(
                 connection.execute("SELECT * FROM ingredients WHERE id = ?", (cursor.lastrowid,)).fetchone()
             )
+
+    def update_ingredient(self, ingredient_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+        name = _clean_name(payload.get("name"), "Ingredient name")
+        if len(name) > 100:
+            raise ServiceError("Ingredient name must be 100 characters or fewer.")
+        unit = payload.get("default_unit", "pieces")
+        if unit not in ALLOWED_UNITS:
+            raise ServiceError("Choose a valid default unit.")
+        whole_foods = 1 if payload.get("whole_foods", True) else 0
+        with self.database.transaction() as connection:
+            if connection.execute(
+                "SELECT id FROM ingredients WHERE id = ?", (ingredient_id,)
+            ).fetchone() is None:
+                raise ServiceError("Ingredient not found.", 404)
+            try:
+                connection.execute(
+                    """
+                    UPDATE ingredients
+                    SET name = ?, default_unit = ?, whole_foods = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (name, unit, whole_foods, utc_now(), ingredient_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ServiceError("An ingredient with that name already exists.") from exc
+            return dict(
+                connection.execute(
+                    "SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)
+                ).fetchone()
+            )
+
+    def delete_ingredient(self, ingredient_id: int) -> dict[str, bool]:
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT i.id, COUNT(DISTINCT ri.recipe_id) AS usage_count
+                FROM ingredients i
+                LEFT JOIN recipe_ingredients ri ON ri.ingredient_id = i.id
+                WHERE i.id = ?
+                GROUP BY i.id
+                """,
+                (ingredient_id,),
+            ).fetchone()
+            if row is None:
+                raise ServiceError("Ingredient not found.", 404)
+            if row["usage_count"]:
+                raise ServiceError(
+                    f"Remove this ingredient from {row['usage_count']} recipe(s) before deleting it.",
+                    409,
+                )
+            connection.execute("DELETE FROM ingredients WHERE id = ?", (ingredient_id,))
+            return {"deleted": True}
+
+    def create_suggestion(self, payload: dict[str, Any]) -> dict[str, Any]:
+        suggestion = self._clean_suggestion(payload.get("text"))
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                "INSERT INTO suggestions(suggestion_text) VALUES (?)", (suggestion,)
+            )
+            row = connection.execute(
+                "SELECT id, submitted_at, addressed FROM suggestions WHERE id = ?",
+                (cursor.lastrowid,),
+            ).fetchone()
+            return dict(row)
+
+    @staticmethod
+    def _clean_suggestion(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ServiceError("Suggestion text is required.")
+        normalized = (
+            unicodedata.normalize("NFKC", value)
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
+        # Suggestions are untrusted data. This removes invisible/control content
+        # for storage hygiene; it does not make the text safe to use as an AI prompt.
+        normalized = "".join(
+            character
+            for character in normalized
+            if character == "\n" or unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+        )
+        normalized = "\n".join(
+            re.sub(r"[ \t]+", " ", line).strip() for line in normalized.split("\n")
+        )
+        normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
+        if not normalized:
+            raise ServiceError("Suggestion text is required.")
+        if len(normalized) > 500:
+            raise ServiceError("Suggestion text must be 500 characters or fewer.")
+        return normalized
 
     @staticmethod
     def metadata() -> dict[str, Any]:

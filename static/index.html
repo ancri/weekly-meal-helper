@@ -16,12 +16,15 @@
       <nav class="main-tabs" aria-label="Main navigation">
         <button class="tab active" data-view="week">This week</button>
         <button class="tab" data-view="recipes">Recipes</button>
+        <button class="tab" data-view="ingredients">Ingredients</button>
       </nav>
+      <button type="button" id="open-suggestion" class="header-action">Suggest</button>
     </header>
 
     <main>
       <section id="week-view" class="view"></section>
       <section id="recipes-view" class="view hidden"></section>
+      <section id="ingredients-view" class="view hidden"></section>
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
@@ -117,6 +120,57 @@
         <p id="instructions-copy" class="instructions-copy"></p>
         <a id="instructions-url" class="button secondary instructions-link" target="_blank" rel="noopener noreferrer">Open full recipe</a>
       </div>
+    </dialog>
+
+    <dialog id="ingredient-dialog" class="dialog ingredient-dialog">
+      <form id="ingredient-form" method="dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Ingredient</p>
+            <h2 id="ingredient-dialog-title">Edit ingredient</h2>
+          </div>
+          <button type="button" class="icon-button dialog-close" aria-label="Close" title="Close">&times;</button>
+        </div>
+        <div class="form-grid">
+          <label class="field field-wide">
+            <span>Name</span>
+            <input id="managed-ingredient-name" name="name" required maxlength="100">
+          </label>
+          <label class="field">
+            <span>Default unit</span>
+            <select id="managed-ingredient-unit" name="default_unit" required></select>
+          </label>
+          <label class="check-field managed-source-field">
+            <input id="managed-ingredient-whole-foods" name="whole_foods" type="checkbox" checked>
+            <span>Buy at Whole Foods</span>
+          </label>
+        </div>
+        <div class="dialog-actions">
+          <button type="button" class="button ghost dialog-close">Cancel</button>
+          <button type="submit" class="button primary">Save ingredient</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="suggestion-dialog" class="dialog suggestion-dialog">
+      <form id="suggestion-form" method="dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Feedback</p>
+            <h2>Submit suggestion</h2>
+          </div>
+          <button type="button" class="icon-button dialog-close" aria-label="Close" title="Close">&times;</button>
+        </div>
+        <label class="field">
+          <span>Suggestion</span>
+          <textarea id="suggestion-text" name="text" required maxlength="500" rows="6" placeholder="What should we improve?"></textarea>
+        </label>
+        <div id="suggestion-count" class="character-count">0 / 500</div>
+        <div class="dialog-actions">
+          <button type="button" class="button ghost dialog-close">Cancel</button>
+          <button type="submit" class="button primary">Submit</button>
+        </div>
+      </form>
     </dialog>
 
     <script src="/static/app.js" defer></script>

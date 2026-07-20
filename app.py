@@ -70,6 +70,8 @@ def make_handler(service: MealService):
                     self._json(service.create_recipe(payload), 201)
                 elif parsed.path == "/api/ingredients":
                     self._json(service.create_ingredient(payload), 201)
+                elif parsed.path == "/api/suggestions":
+                    self._json(service.create_suggestion(payload), 201)
                 elif parsed.path == "/api/week/recipes":
                     self._json(service.add_recipe_to_week(payload.get("week_start"), int(payload["recipe_id"])))
                 elif parsed.path == "/api/week/lock":
@@ -94,6 +96,8 @@ def make_handler(service: MealService):
                 payload = self._body()
                 if match := re.fullmatch(r"/api/recipes/(\d+)", parsed.path):
                     self._json(service.update_recipe(int(match.group(1)), payload))
+                elif match := re.fullmatch(r"/api/ingredients/(\d+)", parsed.path):
+                    self._json(service.update_ingredient(int(match.group(1)), payload))
                 else:
                     raise ServiceError("Not found.", 404)
             except ServiceError as exc:
@@ -109,6 +113,8 @@ def make_handler(service: MealService):
                     self._json(service.remove_weekly_recipe(int(match.group(1))))
                 elif match := re.fullmatch(r"/api/recipes/(\d+)", parsed.path):
                     self._json(service.archive_recipe(int(match.group(1))))
+                elif match := re.fullmatch(r"/api/ingredients/(\d+)", parsed.path):
+                    self._json(service.delete_ingredient(int(match.group(1))))
                 else:
                     raise ServiceError("Not found.", 404)
             except ServiceError as exc:

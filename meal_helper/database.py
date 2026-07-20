@@ -17,7 +17,8 @@ CREATE TABLE IF NOT EXISTS ingredients (
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     whole_foods INTEGER NOT NULL DEFAULT 1 CHECK (whole_foods IN (0, 1)),
     default_unit TEXT NOT NULL DEFAULT 'pieces',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS recipes (
@@ -60,6 +61,16 @@ CREATE TABLE IF NOT EXISTS weekly_recipes (
 
 CREATE INDEX IF NOT EXISTS idx_weekly_recipes_week ON weekly_recipes(week_id, position);
 CREATE INDEX IF NOT EXISTS idx_weekly_recipes_recipe ON weekly_recipes(recipe_id, state);
+
+CREATE TABLE IF NOT EXISTS suggestions (
+    id INTEGER PRIMARY KEY,
+    suggestion_text TEXT NOT NULL CHECK (length(suggestion_text) BETWEEN 1 AND 500),
+    submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    addressed INTEGER NOT NULL DEFAULT 0 CHECK (addressed IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_suggestions_addressed
+    ON suggestions(addressed, submitted_at);
 """
 
 
@@ -93,6 +104,14 @@ class Database:
                 connection.execute("ALTER TABLE recipes ADD COLUMN instructions TEXT")
             if "archived_at" not in columns:
                 connection.execute("ALTER TABLE recipes ADD COLUMN archived_at TEXT")
+            ingredient_columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(ingredients)")
+            }
+            if "updated_at" not in ingredient_columns:
+                connection.execute("ALTER TABLE ingredients ADD COLUMN updated_at TEXT")
+                connection.execute(
+                    "UPDATE ingredients SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+                )
 
     def import_history(self, meals: list[HistoricalMeal]) -> tuple[int, int]:
         recipe_count = 0

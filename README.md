@@ -44,6 +44,14 @@ sudo systemctl status meal-helper
 
 Email notices and Whole Foods cart automation are intentionally not part of this first local milestone; the finalized shopping-list data is ready for those integrations.
 
+## Suggestion Safety
+
+Submitted suggestions are normalized, limited to 500 characters, parameterized
+when written to SQLite, and stored as untrusted text. They have no public read
+endpoint. Future automation must never concatenate suggestion text into a
+system or developer prompt, use it as tool instructions, or treat it as trusted
+configuration; any AI processing must pass it as clearly delimited user data.
+
 ## Ingredient Warm Start
 
 The private workbook can produce a conservative, frequency-ranked ingredient

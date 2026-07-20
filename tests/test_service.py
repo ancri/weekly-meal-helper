@@ -129,6 +129,63 @@ class ServiceTests(unittest.TestCase):
         week_recipe = next(item for item in week["items"] if item["id"] == recipe["id"])
         self.assertEqual(week_recipe["instructions"], "Cook until just tender.")
 
+    def test_ingredient_can_be_updated_and_deleted_when_unused(self):
+        ingredient = self.service.create_ingredient(
+            {"name": "Old ingredient name", "default_unit": "pieces", "whole_foods": True}
+        )
+
+        updated = self.service.update_ingredient(
+            ingredient["id"],
+            {"name": "Fresh ingredient", "default_unit": "bunches", "whole_foods": False},
+        )
+
+        self.assertEqual(updated["name"], "Fresh ingredient")
+        self.assertEqual(updated["default_unit"], "bunches")
+        self.assertFalse(updated["whole_foods"])
+        self.assertIsNotNone(updated["updated_at"])
+        listed = next(item for item in self.service.list_ingredients() if item["id"] == ingredient["id"])
+        self.assertEqual(listed["usage_count"], 0)
+        self.assertEqual(self.service.delete_ingredient(ingredient["id"]), {"deleted": True})
+
+    def test_ingredient_used_by_recipe_cannot_be_deleted(self):
+        ingredient = self.service.create_ingredient(
+            {"name": "Protected ingredient", "default_unit": "cups", "whole_foods": True}
+        )
+        recipe = self.service.create_recipe(
+            {
+                "name": "Recipe using protected ingredient",
+                "category": "pastas",
+                "ingredients": [{"id": ingredient["id"], "quantity": 1, "unit": "cups"}],
+            }
+        )
+
+        with self.assertRaises(ServiceError) as raised:
+            self.service.delete_ingredient(ingredient["id"])
+
+        self.assertEqual(raised.exception.status, 409)
+        self.assertEqual(self.service.get_recipe(recipe["id"])["ingredients"][0]["id"], ingredient["id"])
+
+    def test_suggestion_is_normalized_and_stored_unaddressed(self):
+        created = self.service.create_suggestion(
+            {"text": "  Add\u200b   meal prep\r\n\r\n\r\ncontrols.  "}
+        )
+
+        self.assertFalse(created["addressed"])
+        self.assertIsNotNone(created["submitted_at"])
+        with self.database.transaction() as connection:
+            stored = connection.execute(
+                "SELECT suggestion_text, addressed FROM suggestions WHERE id = ?",
+                (created["id"],),
+            ).fetchone()
+        self.assertEqual(stored["suggestion_text"], "Add meal prep\n\ncontrols.")
+        self.assertFalse(stored["addressed"])
+
+    def test_suggestion_rejects_empty_or_oversized_text(self):
+        for text in ("\u200b", "x" * 501):
+            with self.subTest(length=len(text)):
+                with self.assertRaises(ServiceError):
+                    self.service.create_suggestion({"text": text})
+
     def test_archive_recipe_removes_it_from_library_and_unlocked_weeks(self):
         recipe = self.service.create_recipe(
             {"name": "Discard this recipe", "category": "pastas", "ingredients": []}
@@ -192,6 +249,37 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertEqual(recipe["name"], "Existing recipe")
             self.assertIsNone(recipe["instructions"])
             self.assertIsNone(recipe["archived_at"])
+
+    def test_initialize_upgrades_ingredients_and_creates_suggestions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy-ingredients.sqlite3"
+            with sqlite3.connect(path) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE ingredients (
+                        id INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                        whole_foods INTEGER NOT NULL DEFAULT 1,
+                        default_unit TEXT NOT NULL DEFAULT 'pieces',
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """
+                )
+                connection.execute("INSERT INTO ingredients(name) VALUES ('Existing ingredient')")
+
+            database = Database(path)
+            database.initialize()
+
+            with database.transaction() as connection:
+                ingredient = connection.execute(
+                    "SELECT name, updated_at FROM ingredients"
+                ).fetchone()
+                suggestion_columns = {
+                    row["name"] for row in connection.execute("PRAGMA table_info(suggestions)")
+                }
+            self.assertEqual(ingredient["name"], "Existing ingredient")
+            self.assertIsNotNone(ingredient["updated_at"])
+            self.assertIn("addressed", suggestion_columns)
 
 
 if __name__ == "__main__":

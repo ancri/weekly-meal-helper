@@ -11,14 +11,23 @@ const state = {
   recipeCategory: "",
   recipeSortKey: "name",
   recipeSortDirection: "asc",
+  ingredientSearch: "",
+  ingredientSortKey: "name",
+  ingredientSortDirection: "asc",
+  editingIngredientId: null,
 };
 
 const weekView = document.querySelector("#week-view");
 const recipesView = document.querySelector("#recipes-view");
+const ingredientsView = document.querySelector("#ingredients-view");
 const recipeDialog = document.querySelector("#recipe-dialog");
 const addRecipeDialog = document.querySelector("#add-recipe-dialog");
 const instructionsDialog = document.querySelector("#instructions-dialog");
+const ingredientDialog = document.querySelector("#ingredient-dialog");
+const suggestionDialog = document.querySelector("#suggestion-dialog");
 const recipeForm = document.querySelector("#recipe-form");
+const ingredientForm = document.querySelector("#ingredient-form");
+const suggestionForm = document.querySelector("#suggestion-form");
 const toast = document.querySelector("#toast");
 
 function h(value) {
@@ -265,7 +274,7 @@ function renderRecipes() {
           <button id="new-recipe" class="button primary">+ New recipe</button>
         </div>
       </div>
-      <table class="recipe-table">
+      <table class="recipe-table recipe-library-table">
         <thead><tr>
           ${recipeSortHeader("name", "Recipe")}
           ${recipeSortHeader("category", "Category")}
@@ -353,6 +362,135 @@ function renderRecipeRows() {
         </div>
       </td>
     </tr>`).join("") : '<tr><td class="recipe-empty" colspan="5">No matching recipes.</td></tr>';
+}
+
+function ingredientSortHeader(key, label) {
+  const active = state.ingredientSortKey === key;
+  const direction = active ? state.ingredientSortDirection : "none";
+  const indicator = active ? (direction === "asc" ? "&#8593;" : "&#8595;") : "";
+  const ariaSort = direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none";
+  return `<th aria-sort="${ariaSort}"><button class="recipe-sort" data-sort-ingredient="${key}">${label}<span class="sort-indicator" aria-hidden="true">${indicator}</span></button></th>`;
+}
+
+function visibleIngredients() {
+  const query = state.ingredientSearch.trim().toLocaleLowerCase();
+  const ingredients = state.ingredients.filter((ingredient) =>
+    !query || ingredient.name.toLocaleLowerCase().includes(query)
+  );
+  return ingredients.sort((first, second) => {
+    let comparison;
+    if (state.ingredientSortKey === "whole_foods") {
+      comparison = Number(second.whole_foods) - Number(first.whole_foods);
+    } else if (state.ingredientSortKey === "usage_count") {
+      comparison = Number(first.usage_count) - Number(second.usage_count);
+    } else if (state.ingredientSortKey === "default_unit") {
+      comparison = first.default_unit.localeCompare(second.default_unit, undefined, { sensitivity: "base" });
+    } else {
+      comparison = first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
+    }
+    if (comparison === 0 && state.ingredientSortKey !== "name") {
+      comparison = first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
+    }
+    return state.ingredientSortDirection === "asc" ? comparison : -comparison;
+  });
+}
+
+function highlightedIngredientName(name) {
+  const query = state.ingredientSearch.trim();
+  if (!query) return h(name);
+  const text = String(name);
+  const match = text.toLocaleLowerCase().indexOf(query.toLocaleLowerCase());
+  if (match === -1) return h(text);
+  return `${h(text.slice(0, match))}<mark>${h(text.slice(match, match + query.length))}</mark>${h(text.slice(match + query.length))}`;
+}
+
+function renderIngredients() {
+  ingredientsView.innerHTML = `
+    <div class="page-shell">
+      <div class="recipe-page-header">
+        <div><p class="eyebrow">Catalog</p><h1>Ingredients</h1></div>
+        <div class="recipe-tools">
+          <input id="ingredient-search" type="search" value="${h(state.ingredientSearch)}" placeholder="Search ingredients" aria-label="Search ingredients">
+          <button id="new-managed-ingredient" class="button primary">+ New ingredient</button>
+        </div>
+      </div>
+      <table class="recipe-table ingredient-table">
+        <thead><tr>
+          ${ingredientSortHeader("name", "Ingredient")}
+          ${ingredientSortHeader("whole_foods", "Source")}
+          ${ingredientSortHeader("default_unit", "Default unit")}
+          ${ingredientSortHeader("usage_count", "Recipes")}
+          <th><span class="visually-hidden">Actions</span></th>
+        </tr></thead>
+        <tbody id="ingredient-table-body"></tbody>
+      </table>
+    </div>`;
+  renderIngredientTableRows();
+}
+
+function renderIngredientTableRows() {
+  const target = document.querySelector("#ingredient-table-body");
+  if (!target) return;
+  const ingredients = visibleIngredients();
+  target.innerHTML = ingredients.length ? ingredients.map((ingredient) => `
+    <tr>
+      <td><strong>${highlightedIngredientName(ingredient.name)}</strong></td>
+      <td><span class="ingredient-source">${ingredient.whole_foods ? "Whole Foods" : "Elsewhere"}</span></td>
+      <td>${h(ingredient.default_unit)}</td>
+      <td><span class="ingredient-usage">${ingredient.usage_count} recipe${Number(ingredient.usage_count) === 1 ? "" : "s"}</span></td>
+      <td>
+        <div class="recipe-actions">
+          <button class="text-button" data-edit-ingredient="${ingredient.id}">Edit</button>
+          <button class="text-button danger" data-delete-ingredient="${ingredient.id}" data-ingredient-name="${h(ingredient.name)}" ${Number(ingredient.usage_count) ? `disabled title="Used by ${ingredient.usage_count} recipe(s)"` : ""}>Delete</button>
+        </div>
+      </td>
+    </tr>`).join("") : '<tr><td class="recipe-empty" colspan="5">No matching ingredients.</td></tr>';
+}
+
+function openManagedIngredient(ingredientId = null) {
+  state.editingIngredientId = ingredientId;
+  const ingredient = ingredientId
+    ? state.ingredients.find((item) => item.id === Number(ingredientId))
+    : { name: "", default_unit: "pieces", whole_foods: true };
+  if (!ingredient) return notify("Ingredient not found.", true);
+  document.querySelector("#ingredient-dialog-title").textContent = ingredientId ? "Edit ingredient" : "New ingredient";
+  document.querySelector("#managed-ingredient-name").value = ingredient.name;
+  document.querySelector("#managed-ingredient-unit").innerHTML = unitOptions(ingredient.default_unit);
+  document.querySelector("#managed-ingredient-whole-foods").checked = Boolean(ingredient.whole_foods);
+  ingredientDialog.showModal();
+}
+
+async function saveManagedIngredient(event) {
+  event.preventDefault();
+  const payload = {
+    name: document.querySelector("#managed-ingredient-name").value,
+    default_unit: document.querySelector("#managed-ingredient-unit").value,
+    whole_foods: document.querySelector("#managed-ingredient-whole-foods").checked,
+  };
+  try {
+    await api(state.editingIngredientId ? `/api/ingredients/${state.editingIngredientId}` : "/api/ingredients", {
+      method: state.editingIngredientId ? "PUT" : "POST",
+      body: JSON.stringify(payload),
+    });
+    await refreshIngredients();
+    ingredientDialog.close();
+    renderIngredients();
+    notify("Ingredient saved.");
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+async function deleteManagedIngredient(ingredientId, ingredientName) {
+  if (!window.confirm(`Delete “${ingredientName}” from the ingredient catalog?`)) return;
+  try {
+    await api(`/api/ingredients/${ingredientId}`, { method: "DELETE" });
+    await refreshIngredients();
+    renderIngredients();
+    notify("Ingredient deleted.");
+  } catch (error) {
+    notify(error.message, true);
+  }
 }
 
 async function refreshIngredients() {
@@ -502,6 +640,29 @@ async function createIngredient() {
   }
 }
 
+function openSuggestion() {
+  document.querySelector("#suggestion-text").value = "";
+  document.querySelector("#suggestion-count").textContent = "0 / 500";
+  suggestionDialog.showModal();
+  document.querySelector("#suggestion-text").focus();
+}
+
+async function submitSuggestion(event) {
+  event.preventDefault();
+  const text = document.querySelector("#suggestion-text").value;
+  try {
+    await api("/api/suggestions", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    suggestionDialog.close();
+    suggestionForm.reset();
+    notify("Suggestion submitted.");
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
 function renderRecipePicker(query = "") {
   const lowered = query.trim().toLocaleLowerCase();
   const currentIds = new Set(state.week.items.map((item) => item.id));
@@ -539,10 +700,18 @@ function switchView(view) {
   document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === view));
   weekView.classList.toggle("hidden", view !== "week");
   recipesView.classList.toggle("hidden", view !== "recipes");
+  ingredientsView.classList.toggle("hidden", view !== "ingredients");
   if (view === "recipes") loadRecipes().catch((error) => notify(error.message, true));
+  if (view === "ingredients") {
+    refreshIngredients()
+      .then(renderIngredients)
+      .catch((error) => notify(error.message, true));
+  }
 }
 
 document.addEventListener("click", async (event) => {
+  if (event.target.closest("#open-suggestion")) return openSuggestion();
+
   const tab = event.target.closest("[data-view]");
   if (tab) return switchView(tab.dataset.view);
 
@@ -597,6 +766,31 @@ document.addEventListener("click", async (event) => {
     return renderRecipes();
   }
 
+  const ingredientSort = event.target.closest("[data-sort-ingredient]");
+  if (ingredientSort) {
+    const key = ingredientSort.dataset.sortIngredient;
+    if (state.ingredientSortKey === key) {
+      state.ingredientSortDirection = state.ingredientSortDirection === "asc" ? "desc" : "asc";
+    } else {
+      state.ingredientSortKey = key;
+      state.ingredientSortDirection = "asc";
+    }
+    return renderIngredients();
+  }
+
+  if (event.target.closest("#new-managed-ingredient")) return openManagedIngredient();
+
+  const editIngredient = event.target.closest("[data-edit-ingredient]");
+  if (editIngredient) return openManagedIngredient(Number(editIngredient.dataset.editIngredient));
+
+  const deleteIngredient = event.target.closest("[data-delete-ingredient]");
+  if (deleteIngredient) {
+    return deleteManagedIngredient(
+      Number(deleteIngredient.dataset.deleteIngredient),
+      deleteIngredient.dataset.ingredientName,
+    );
+  }
+
   const add = event.target.closest("[data-add-recipe]");
   if (add) return addExistingRecipe(add.dataset.addRecipe);
 
@@ -635,6 +829,13 @@ document.addEventListener("input", (event) => {
     state.recipeSearch = event.target.value;
     renderRecipeRows();
   }
+  if (event.target.matches("#ingredient-search")) {
+    state.ingredientSearch = event.target.value;
+    renderIngredientTableRows();
+  }
+  if (event.target.matches("#suggestion-text")) {
+    document.querySelector("#suggestion-count").textContent = `${event.target.value.length} / 500`;
+  }
 });
 
 document.addEventListener("change", (event) => {
@@ -645,6 +846,8 @@ document.addEventListener("change", (event) => {
 });
 
 recipeForm.addEventListener("submit", saveRecipe);
+ingredientForm.addEventListener("submit", saveManagedIngredient);
+suggestionForm.addEventListener("submit", submitSuggestion);
 
 async function initialize() {
   try {
