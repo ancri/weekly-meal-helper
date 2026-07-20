@@ -136,7 +136,7 @@ function renderWeek() {
       <div class="lock-bar-inner">
         ${week.locked ? `
           <div class="locked-banner"><span class="lock-symbol">&#10003;</span><div><strong>Week locked</strong><span>Your shopping list is ready</span></div></div>
-          <strong>${week.accepted_count} meals</strong>
+          <button class="button secondary" id="unlock-week">Unlock week</button>
         ` : `
           <div><strong>${week.accepted_count === week.choose_count ? "Ready to lock" : `Select ${week.choose_count - week.accepted_count} more`}</strong><span>Locking finalizes the menu and shopping list</span></div>
           <button class="button primary" id="lock-week" ${week.accepted_count !== week.choose_count ? "disabled" : ""}>Lock this week</button>
@@ -224,6 +224,20 @@ async function lockWeek() {
     });
     renderWeek();
     notify("The weekly menu is locked.");
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+async function unlockWeek() {
+  if (!window.confirm("Unlock this week? Its meals and decisions will become editable again.")) return;
+  try {
+    state.week = await api("/api/week/unlock", {
+      method: "POST",
+      body: JSON.stringify({ week_start: state.week.week_start }),
+    });
+    renderWeek();
+    notify("The week is unlocked.");
   } catch (error) {
     notify(error.message, true);
   }
@@ -561,6 +575,7 @@ document.addEventListener("click", async (event) => {
   if (meal) return openRecipe(Number(meal.dataset.openRecipe));
 
   if (event.target.closest("#lock-week")) return lockWeek();
+  if (event.target.closest("#unlock-week")) return unlockWeek();
   if (event.target.closest("#open-recipe-picker")) return openRecipePicker();
   if (event.target.closest("#new-recipe")) return openRecipe();
 

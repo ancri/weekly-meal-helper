@@ -43,6 +43,19 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.service.set_decision(week["items"][3]["weekly_recipe_id"], "rejected")
 
+    def test_unlock_preserves_selections_and_makes_week_editable(self):
+        week = self.service.get_week("2026-07-20")
+        for item in week["items"][:3]:
+            week = self.service.set_decision(item["weekly_recipe_id"], "accepted")
+        locked = self.service.lock_week(week["week_start"])
+
+        unlocked = self.service.unlock_week(locked["week_start"])
+
+        self.assertFalse(unlocked["locked"])
+        self.assertEqual(unlocked["accepted_count"], 3)
+        changed = self.service.set_decision(unlocked["items"][0]["weekly_recipe_id"], "pending")
+        self.assertEqual(changed["accepted_count"], 2)
+
     def test_shopping_list_combines_quantities_and_sources(self):
         week = self.service.get_week("2026-07-20")
         whole_foods = self.service.create_ingredient(

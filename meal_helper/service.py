@@ -271,6 +271,17 @@ class MealService:
             )
             return self._week_payload(connection, row["id"])
 
+    def unlock_week(self, week: str) -> dict[str, Any]:
+        week_start = _parse_week_start(week)
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM weeks WHERE week_start = ?", (week_start.isoformat(),)
+            ).fetchone()
+            if row is None:
+                raise ServiceError("Week not found.", 404)
+            connection.execute("UPDATE weeks SET locked_at = NULL WHERE id = ?", (row["id"],))
+            return self._week_payload(connection, row["id"])
+
     def _editable_weekly_recipe(
         self, connection: sqlite3.Connection, weekly_recipe_id: int
     ) -> sqlite3.Row:

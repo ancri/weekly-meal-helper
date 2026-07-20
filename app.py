@@ -74,6 +74,8 @@ def make_handler(service: MealService):
                     self._json(service.add_recipe_to_week(payload.get("week_start"), int(payload["recipe_id"])))
                 elif parsed.path == "/api/week/lock":
                     self._json(service.lock_week(payload.get("week_start")))
+                elif parsed.path == "/api/week/unlock":
+                    self._json(service.unlock_week(payload.get("week_start")))
                 elif match := re.fullmatch(r"/api/week-items/(\d+)/decision", parsed.path):
                     self._json(service.set_decision(int(match.group(1)), payload.get("state")))
                 else:
