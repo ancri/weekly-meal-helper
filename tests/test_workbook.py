@@ -2,7 +2,12 @@ import unittest
 from datetime import date
 
 from meal_helper.config import HISTORY_WORKBOOK
-from meal_helper.workbook import infer_category, parse_sheet_date, read_historical_meals
+from meal_helper.workbook import (
+    infer_category,
+    parse_sheet_date,
+    read_historical_meals,
+    read_historical_orders,
+)
 
 
 class WorkbookTests(unittest.TestCase):
@@ -26,6 +31,14 @@ class WorkbookTests(unittest.TestCase):
         self.assertEqual(infer_category("Chicken noodle soup"), "soups_stews")
         self.assertEqual(infer_category("Spaghetti bolognese"), "pastas")
         self.assertEqual(infer_category("Cumin roasted salmon"), "oven_roasted")
+
+    @unittest.skipUnless(HISTORY_WORKBOOK.exists(), "proprietary history workbook is not present")
+    def test_reads_order_history_with_retailer_provenance(self):
+        orders = read_historical_orders(HISTORY_WORKBOOK)
+        self.assertGreater(len(orders), 13_000)
+        self.assertTrue(any(item.whole_foods for item in orders))
+        self.assertTrue(any(not item.whole_foods for item in orders))
+        self.assertTrue(all(item.week_start.weekday() == 0 for item in orders))
 
 
 if __name__ == "__main__":

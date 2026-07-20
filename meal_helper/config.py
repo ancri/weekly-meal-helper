@@ -31,4 +31,7 @@ ALLOWED_UNITS = (
     "jars",
     "bunches",
     "packages",
+    "heads",
+    "cloves",
+    "stalks",
 )

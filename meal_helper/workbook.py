@@ -22,6 +22,15 @@ class HistoricalMeal:
     recipe_name: str
 
 
+@dataclass(frozen=True)
+class HistoricalOrderItem:
+    week_start: date
+    ordered_on: date
+    retailer: str
+    whole_foods: bool
+    raw_text: str
+
+
 def monday_for(value: date) -> date:
     return value - timedelta(days=value.weekday())
 
@@ -84,27 +93,33 @@ def _shared_strings(archive: ZipFile) -> list[str]:
     ]
 
 
+def _workbook_sheets(archive: ZipFile) -> list[tuple[str, str]]:
+    workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+    relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    targets = {
+        node.attrib["Id"]: node.attrib["Target"]
+        for node in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
+    }
+    sheets = []
+    for sheet in workbook.findall(".//m:sheet", NS):
+        relationship_id = sheet.attrib[f"{{{OFFICE_REL_NS}}}id"]
+        target = targets[relationship_id]
+        if target.startswith("/"):
+            worksheet_path = target.lstrip("/")
+        else:
+            worksheet_path = posixpath.normpath(posixpath.join("xl", target))
+        sheets.append((sheet.attrib["name"], worksheet_path))
+    return sheets
+
+
 def read_historical_meals(path: str | Path) -> list[HistoricalMeal]:
     meals: list[HistoricalMeal] = []
     with ZipFile(path) as archive:
         shared_strings = _shared_strings(archive)
-        workbook = ET.fromstring(archive.read("xl/workbook.xml"))
-        relationships = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
-        targets = {
-            node.attrib["Id"]: node.attrib["Target"]
-            for node in relationships.findall(f"{{{PACKAGE_REL_NS}}}Relationship")
-        }
-
-        for sheet in workbook.findall(".//m:sheet", NS):
-            eaten_on = parse_sheet_date(sheet.attrib["name"])
+        for sheet_name, worksheet_path in _workbook_sheets(archive):
+            eaten_on = parse_sheet_date(sheet_name)
             if eaten_on is None:
                 continue
-            relationship_id = sheet.attrib[f"{{{OFFICE_REL_NS}}}id"]
-            target = targets[relationship_id]
-            if target.startswith("/"):
-                worksheet_path = target.lstrip("/")
-            else:
-                worksheet_path = posixpath.normpath(posixpath.join("xl", target))
             worksheet = ET.fromstring(archive.read(worksheet_path))
             cells = {
                 cell.attrib.get("r", ""): cell
@@ -115,6 +130,42 @@ def read_historical_meals(path: str | Path) -> list[HistoricalMeal]:
                 if name:
                     meals.append(HistoricalMeal(monday_for(eaten_on), eaten_on, name))
     return meals
+
+
+def read_historical_orders(path: str | Path) -> list[HistoricalOrderItem]:
+    orders: list[HistoricalOrderItem] = []
+    with ZipFile(path) as archive:
+        shared_strings = _shared_strings(archive)
+        for sheet_name, worksheet_path in _workbook_sheets(archive):
+            ordered_on = parse_sheet_date(sheet_name)
+            if ordered_on is None:
+                continue
+            worksheet = ET.fromstring(archive.read(worksheet_path))
+            cells = {
+                cell.attrib.get("r", ""): cell
+                for cell in worksheet.findall(".//m:c", NS)
+            }
+            for column in ("G", "H", "J"):
+                retailer = re.sub(
+                    r"\s+", " ", _cell_text(cells.get(f"{column}1"), shared_strings)
+                ).strip()
+                whole_foods = "whole foods" in retailer.casefold()
+                for reference, cell in cells.items():
+                    match = re.fullmatch(rf"{column}(\d+)", reference)
+                    if match is None or int(match.group(1)) < 2:
+                        continue
+                    raw_text = re.sub(r"\s+", " ", _cell_text(cell, shared_strings)).strip()
+                    if raw_text:
+                        orders.append(
+                            HistoricalOrderItem(
+                                week_start=monday_for(ordered_on),
+                                ordered_on=ordered_on,
+                                retailer=retailer,
+                                whole_foods=whole_foods,
+                                raw_text=raw_text,
+                            )
+                        )
+    return orders
 
 
 def infer_category(recipe_name: str) -> str:

@@ -44,6 +44,30 @@ sudo systemctl status meal-helper
 
 Email notices and Whole Foods cart automation are intentionally not part of this first local milestone; the finalized shopping-list data is ready for those integrations.
 
+## Ingredient Warm Start
+
+The private workbook can produce a conservative, frequency-ranked ingredient
+catalog without committing household data to Git:
+
+```bash
+python3 scripts/build_ingredient_candidates.py
+```
+
+This writes ignored candidate and unmatched-review CSV files under `data/`.
+Candidate names, units, source classification, and the `include` column can be
+reviewed before a dry run or import. Existing ingredients are never overwritten:
+
+```bash
+python3 scripts/import_ingredient_candidates.py \
+  data/ingredient_candidates.csv \
+  --database data/meal_helper.sqlite3
+
+python3 scripts/import_ingredient_candidates.py \
+  data/ingredient_candidates.csv \
+  --database data/meal_helper.sqlite3 \
+  --apply
+```
+
 ## Production operations
 
 SSH can be used for remote diagnostics while keeping the development toolchain local:
