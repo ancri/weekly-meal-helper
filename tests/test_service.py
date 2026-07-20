@@ -79,6 +79,15 @@ class ServiceTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.service.get_recipe(recipe["id"])
 
+    def test_recipe_library_returns_all_recipes_for_client_side_controls(self):
+        with self.database.transaction() as connection:
+            connection.executemany(
+                "INSERT INTO recipes(name, category) VALUES (?, 'pastas')",
+                ((f"Bulk recipe {number:03d}",) for number in range(501)),
+            )
+
+        self.assertEqual(len(self.service.list_recipes()), 513)
+
     def test_recipe_instructions_are_editable_and_included_in_week(self):
         recipe = self.service.create_recipe(
             {

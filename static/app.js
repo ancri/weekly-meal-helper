@@ -7,6 +7,10 @@ const state = {
   editingRecipeId: null,
   addCreatedRecipeToWeek: false,
   view: "week",
+  recipeSearch: "",
+  recipeCategory: "",
+  recipeSortKey: "name",
+  recipeSortDirection: "asc",
 };
 
 const weekView = document.querySelector("#week-view");
@@ -225,40 +229,116 @@ async function lockWeek() {
   }
 }
 
-async function loadRecipes(query = "") {
-  state.recipes = await api(`/api/recipes?q=${encodeURIComponent(query)}`);
+async function loadRecipes() {
+  state.recipes = await api("/api/recipes");
   renderRecipes();
 }
 
 function renderRecipes() {
+  const categoryFilters = Object.entries(state.meta.categories)
+    .map(([value, label]) => `<option value="${h(value)}" ${value === state.recipeCategory ? "selected" : ""}>${h(label)}</option>`)
+    .join("");
   recipesView.innerHTML = `
     <div class="page-shell">
       <div class="recipe-page-header">
         <div><p class="eyebrow">Library</p><h1>Recipes</h1></div>
         <div class="recipe-tools">
-          <input id="recipe-search" type="search" value="${h(document.querySelector("#recipe-search")?.value || "")}" placeholder="Search recipes" aria-label="Search recipes">
+          <input id="recipe-search" type="search" value="${h(state.recipeSearch)}" placeholder="Search recipes" aria-label="Search recipes">
+          <select id="recipe-category-filter" aria-label="Filter recipes by category">
+            <option value="">All categories</option>
+            ${categoryFilters}
+          </select>
           <button id="new-recipe" class="button primary">+ New recipe</button>
         </div>
       </div>
       <table class="recipe-table">
-        <thead><tr><th>Recipe</th><th>Category</th><th>Last cooked</th><th>Ingredients</th><th></th></tr></thead>
-        <tbody>
-          ${state.recipes.map((recipe) => `
-            <tr>
-              <td><strong>${h(recipe.name)}</strong></td>
-              <td><span class="category-tag">${h(state.meta.categories[recipe.category])}</span></td>
-              <td>${h(shortDate(recipe.last_eaten))}</td>
-              <td>${recipe.ingredient_count}</td>
-              <td>
-                <div class="recipe-actions">
-                  <button class="text-button" data-edit-recipe="${recipe.id}">Edit</button>
-                  <button class="text-button danger" data-delete-recipe="${recipe.id}" data-recipe-name="${h(recipe.name)}">Delete</button>
-                </div>
-              </td>
-            </tr>`).join("")}
-        </tbody>
+        <thead><tr>
+          ${recipeSortHeader("name", "Recipe")}
+          ${recipeSortHeader("category", "Category")}
+          ${recipeSortHeader("last_eaten", "Last cooked")}
+          ${recipeSortHeader("ingredient_count", "Ingredients")}
+          <th><span class="visually-hidden">Actions</span></th>
+        </tr></thead>
+        <tbody id="recipe-table-body"></tbody>
       </table>
     </div>`;
+  renderRecipeRows();
+}
+
+function recipeSortHeader(key, label) {
+  const active = state.recipeSortKey === key;
+  const direction = active ? state.recipeSortDirection : "none";
+  const indicator = active ? (direction === "asc" ? "&#8593;" : "&#8595;") : "";
+  const ariaSort = direction === "asc" ? "ascending" : direction === "desc" ? "descending" : "none";
+  return `<th aria-sort="${ariaSort}"><button class="recipe-sort" data-sort-recipe="${key}">${label}<span class="sort-indicator" aria-hidden="true">${indicator}</span></button></th>`;
+}
+
+function highlightedRecipeName(name) {
+  const query = state.recipeSearch.trim();
+  if (!query) return h(name);
+  const text = String(name);
+  const lowered = text.toLocaleLowerCase();
+  const needle = query.toLocaleLowerCase();
+  let result = "";
+  let cursor = 0;
+  let match = lowered.indexOf(needle);
+  while (match !== -1) {
+    result += h(text.slice(cursor, match));
+    result += `<mark>${h(text.slice(match, match + query.length))}</mark>`;
+    cursor = match + query.length;
+    match = lowered.indexOf(needle, cursor);
+  }
+  return result + h(text.slice(cursor));
+}
+
+function visibleRecipes() {
+  const query = state.recipeSearch.trim().toLocaleLowerCase();
+  const recipes = state.recipes.filter((recipe) =>
+    (!query || recipe.name.toLocaleLowerCase().includes(query))
+    && (!state.recipeCategory || recipe.category === state.recipeCategory)
+  );
+  return recipes.sort((first, second) => {
+    let comparison;
+    if (state.recipeSortKey === "ingredient_count") {
+      comparison = Number(first.ingredient_count) - Number(second.ingredient_count);
+    } else if (state.recipeSortKey === "last_eaten") {
+      if (!first.last_eaten && !second.last_eaten) comparison = 0;
+      else if (!first.last_eaten) return 1;
+      else if (!second.last_eaten) return -1;
+      else comparison = first.last_eaten.localeCompare(second.last_eaten);
+    } else if (state.recipeSortKey === "category") {
+      comparison = state.meta.categories[first.category].localeCompare(
+        state.meta.categories[second.category],
+        undefined,
+        { sensitivity: "base" },
+      );
+    } else {
+      comparison = first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
+    }
+    if (comparison === 0 && state.recipeSortKey !== "name") {
+      comparison = first.name.localeCompare(second.name, undefined, { sensitivity: "base" });
+    }
+    return state.recipeSortDirection === "asc" ? comparison : -comparison;
+  });
+}
+
+function renderRecipeRows() {
+  const target = document.querySelector("#recipe-table-body");
+  if (!target) return;
+  const recipes = visibleRecipes();
+  target.innerHTML = recipes.length ? recipes.map((recipe) => `
+    <tr>
+      <td><strong>${highlightedRecipeName(recipe.name)}</strong></td>
+      <td><span class="category-tag">${h(state.meta.categories[recipe.category])}</span></td>
+      <td>${h(shortDate(recipe.last_eaten))}</td>
+      <td>${recipe.ingredient_count}</td>
+      <td>
+        <div class="recipe-actions">
+          <button class="text-button" data-edit-recipe="${recipe.id}">Edit</button>
+          <button class="text-button danger" data-delete-recipe="${recipe.id}" data-recipe-name="${h(recipe.name)}">Delete</button>
+        </div>
+      </td>
+    </tr>`).join("") : '<tr><td class="recipe-empty" colspan="5">No matching recipes.</td></tr>';
 }
 
 async function refreshIngredients() {
@@ -358,7 +438,7 @@ async function saveRecipe(event) {
     }
     recipeDialog.close();
     renderWeek();
-    if (state.view === "recipes") await loadRecipes(document.querySelector("#recipe-search")?.value || "");
+    if (state.view === "recipes") await loadRecipes();
     notify("Recipe saved.");
   } catch (error) {
     notify(error.message, true);
@@ -381,7 +461,7 @@ async function deleteRecipe(recipeId, recipeName) {
   try {
     await api(`/api/recipes/${recipeId}`, { method: "DELETE" });
     if (state.week) state.week = await api(`/api/week?start=${encodeURIComponent(state.week.week_start)}`);
-    await loadRecipes(document.querySelector("#recipe-search")?.value || "");
+    await loadRecipes();
     notify("Recipe deleted from the library.");
   } catch (error) {
     notify(error.message, true);
@@ -490,6 +570,18 @@ document.addEventListener("click", async (event) => {
   const deleteButton = event.target.closest("[data-delete-recipe]");
   if (deleteButton) return deleteRecipe(Number(deleteButton.dataset.deleteRecipe), deleteButton.dataset.recipeName);
 
+  const sort = event.target.closest("[data-sort-recipe]");
+  if (sort) {
+    const key = sort.dataset.sortRecipe;
+    if (state.recipeSortKey === key) {
+      state.recipeSortDirection = state.recipeSortDirection === "asc" ? "desc" : "asc";
+    } else {
+      state.recipeSortKey = key;
+      state.recipeSortDirection = "asc";
+    }
+    return renderRecipes();
+  }
+
   const add = event.target.closest("[data-add-recipe]");
   if (add) return addExistingRecipe(add.dataset.addRecipe);
 
@@ -525,8 +617,15 @@ document.addEventListener("keydown", (event) => {
 document.addEventListener("input", (event) => {
   if (event.target.matches("#recipe-picker-search")) renderRecipePicker(event.target.value);
   if (event.target.matches("#recipe-search")) {
-    clearTimeout(state.searchTimer);
-    state.searchTimer = setTimeout(() => loadRecipes(event.target.value).catch((error) => notify(error.message, true)), 180);
+    state.recipeSearch = event.target.value;
+    renderRecipeRows();
+  }
+});
+
+document.addEventListener("change", (event) => {
+  if (event.target.matches("#recipe-category-filter")) {
+    state.recipeCategory = event.target.value;
+    renderRecipeRows();
   }
 });
 

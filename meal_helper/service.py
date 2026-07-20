@@ -306,7 +306,6 @@ class MealService:
                 WHERE r.name LIKE ? AND r.archived_at IS NULL
                 GROUP BY r.id
                 ORDER BY r.name COLLATE NOCASE
-                LIMIT 500
                 """,
                 (f"%{query.strip()}%",),
             ).fetchall()
