@@ -105,6 +105,8 @@ def make_handler(service: MealService):
                 parsed = urlparse(self.path)
                 if match := re.fullmatch(r"/api/week-items/(\d+)", parsed.path):
                     self._json(service.remove_weekly_recipe(int(match.group(1))))
+                elif match := re.fullmatch(r"/api/recipes/(\d+)", parsed.path):
+                    self._json(service.archive_recipe(int(match.group(1))))
                 else:
                     raise ServiceError("Not found.", 404)
             except ServiceError as exc:

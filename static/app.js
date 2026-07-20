@@ -13,6 +13,7 @@ const weekView = document.querySelector("#week-view");
 const recipesView = document.querySelector("#recipes-view");
 const recipeDialog = document.querySelector("#recipe-dialog");
 const addRecipeDialog = document.querySelector("#add-recipe-dialog");
+const instructionsDialog = document.querySelector("#instructions-dialog");
 const recipeForm = document.querySelector("#recipe-form");
 const toast = document.querySelector("#toast");
 
@@ -152,6 +153,7 @@ function mealCard(item) {
       <p class="eyebrow">${h(ingredientText)}</p>
       <h3>${h(item.name)}</h3>
       <p class="meal-card-meta">${h(historyText)}</p>
+      <div class="meal-card-links">${item.instructions ? `<button class="text-button" data-show-instructions="${item.id}">Instructions</button>` : ""}</div>
       <div class="meal-spacer"></div>
       ${locked ? `<span class="category-tag">${item.state === "accepted" ? "On the menu" : h(item.state)}</span>` : decisionControl(item)}
     </article>`;
@@ -247,7 +249,12 @@ function renderRecipes() {
               <td><span class="category-tag">${h(state.meta.categories[recipe.category])}</span></td>
               <td>${h(shortDate(recipe.last_eaten))}</td>
               <td>${recipe.ingredient_count}</td>
-              <td><button class="text-button" data-edit-recipe="${recipe.id}">Edit</button></td>
+              <td>
+                <div class="recipe-actions">
+                  <button class="text-button" data-edit-recipe="${recipe.id}">Edit</button>
+                  <button class="text-button danger" data-delete-recipe="${recipe.id}" data-recipe-name="${h(recipe.name)}">Delete</button>
+                </div>
+              </td>
             </tr>`).join("")}
         </tbody>
       </table>
@@ -277,6 +284,7 @@ async function openRecipe(recipeId = null, addToWeek = false) {
     name: "",
     category: "oven_roasted",
     url: "",
+    instructions: "",
     ingredients: [],
   };
   state.editorIngredients = recipe.ingredients.map((item) => ({
@@ -288,6 +296,7 @@ async function openRecipe(recipeId = null, addToWeek = false) {
   document.querySelector("#recipe-name").value = recipe.name;
   document.querySelector("#recipe-category").innerHTML = categoryOptions(recipe.category);
   document.querySelector("#recipe-url").value = recipe.url || "";
+  document.querySelector("#recipe-instructions").value = recipe.instructions || "";
   document.querySelector("#new-ingredient-unit").innerHTML = unitOptions();
   document.querySelector("#new-ingredient-name").value = "";
   document.querySelector("#new-ingredient-whole-foods").checked = true;
@@ -331,6 +340,7 @@ async function saveRecipe(event) {
     name: document.querySelector("#recipe-name").value,
     category: document.querySelector("#recipe-category").value,
     url: document.querySelector("#recipe-url").value,
+    instructions: document.querySelector("#recipe-instructions").value,
     ingredients,
   };
   try {
@@ -350,6 +360,29 @@ async function saveRecipe(event) {
     renderWeek();
     if (state.view === "recipes") await loadRecipes(document.querySelector("#recipe-search")?.value || "");
     notify("Recipe saved.");
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+function showInstructions(recipeId) {
+  const recipe = state.week.items.find((item) => item.id === Number(recipeId));
+  if (!recipe?.instructions) return;
+  document.querySelector("#instructions-title").textContent = recipe.name;
+  document.querySelector("#instructions-copy").textContent = recipe.instructions;
+  const link = document.querySelector("#instructions-url");
+  link.classList.toggle("hidden", !recipe.url);
+  if (recipe.url) link.href = recipe.url;
+  instructionsDialog.showModal();
+}
+
+async function deleteRecipe(recipeId, recipeName) {
+  if (!window.confirm(`Delete “${recipeName}” from the recipe library? Historical weeks will be preserved.`)) return;
+  try {
+    await api(`/api/recipes/${recipeId}`, { method: "DELETE" });
+    if (state.week) state.week = await api(`/api/week?start=${encodeURIComponent(state.week.week_start)}`);
+    await loadRecipes(document.querySelector("#recipe-search")?.value || "");
+    notify("Recipe deleted from the library.");
   } catch (error) {
     notify(error.message, true);
   }
@@ -438,6 +471,12 @@ document.addEventListener("click", async (event) => {
     return removeMeal(remove.dataset.removeItem);
   }
 
+  const instructions = event.target.closest("[data-show-instructions]");
+  if (instructions) {
+    event.stopPropagation();
+    return showInstructions(instructions.dataset.showInstructions);
+  }
+
   const meal = event.target.closest("[data-open-recipe]");
   if (meal) return openRecipe(Number(meal.dataset.openRecipe));
 
@@ -447,6 +486,9 @@ document.addEventListener("click", async (event) => {
 
   const edit = event.target.closest("[data-edit-recipe]");
   if (edit) return openRecipe(Number(edit.dataset.editRecipe));
+
+  const deleteButton = event.target.closest("[data-delete-recipe]");
+  if (deleteButton) return deleteRecipe(Number(deleteButton.dataset.deleteRecipe), deleteButton.dataset.recipeName);
 
   const add = event.target.closest("[data-add-recipe]");
   if (add) return addExistingRecipe(add.dataset.addRecipe);

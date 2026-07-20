@@ -49,6 +49,10 @@
             <span>Instructions URL</span>
             <input id="recipe-url" name="url" type="url" placeholder="https://">
           </label>
+          <label class="field field-wide">
+            <span>Short instructions</span>
+            <textarea id="recipe-instructions" name="instructions" maxlength="1200" rows="4" placeholder="A few steps or reminders for cooking this recipe"></textarea>
+          </label>
         </div>
 
         <div class="section-heading">
@@ -61,7 +65,7 @@
         <div id="ingredient-rows" class="ingredient-editor"></div>
 
         <details class="new-ingredient-panel">
-          <summary>Create an ingredient</summary>
+          <summary>New ingredient</summary>
           <div class="new-ingredient-fields">
             <label class="field">
               <span>Name</span>
@@ -75,7 +79,7 @@
               <input id="new-ingredient-whole-foods" type="checkbox" checked>
               <span>Buy at Whole Foods</span>
             </label>
-            <button type="button" id="create-ingredient" class="button secondary">Create ingredient</button>
+            <button type="button" id="create-ingredient" class="button secondary">Create</button>
           </div>
         </details>
 
@@ -99,6 +103,20 @@
         <button id="create-recipe-for-week" class="button primary">+ New recipe</button>
       </div>
       <div id="recipe-picker-results" class="picker-results"></div>
+    </dialog>
+
+    <dialog id="instructions-dialog" class="dialog instructions-dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">Instructions</p>
+          <h2 id="instructions-title"></h2>
+        </div>
+        <button type="button" class="icon-button dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
+      <div class="instructions-body">
+        <p id="instructions-copy" class="instructions-copy"></p>
+        <a id="instructions-url" class="button secondary instructions-link" target="_blank" rel="noopener noreferrer">Open full recipe</a>
+      </div>
     </dialog>
 
     <script src="/static/app.js" defer></script>

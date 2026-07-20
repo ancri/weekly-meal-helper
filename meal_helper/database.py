@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS recipes (
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     category TEXT NOT NULL CHECK (category IN ('soups_stews', 'pastas', 'oven_roasted')),
     url TEXT,
+    instructions TEXT,
+    archived_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -84,6 +86,13 @@ class Database:
     def initialize(self) -> None:
         with self.transaction() as connection:
             connection.executescript(SCHEMA)
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(recipes)")
+            }
+            if "instructions" not in columns:
+                connection.execute("ALTER TABLE recipes ADD COLUMN instructions TEXT")
+            if "archived_at" not in columns:
+                connection.execute("ALTER TABLE recipes ADD COLUMN archived_at TEXT")
 
     def import_history(self, meals: list[HistoricalMeal]) -> tuple[int, int]:
         recipe_count = 0

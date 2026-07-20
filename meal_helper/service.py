@@ -72,7 +72,7 @@ class MealService:
             FROM weekly_recipes wr
             JOIN weeks w ON w.id = wr.week_id
             JOIN recipes r ON r.id = wr.recipe_id
-            WHERE w.week_start = ? AND wr.state = 'postponed'
+            WHERE w.week_start = ? AND wr.state = 'postponed' AND r.archived_at IS NULL
             ORDER BY wr.position
             """,
             (previous_week,),
@@ -89,6 +89,7 @@ class MealService:
             FROM recipes r
             LEFT JOIN weekly_recipes wr ON wr.recipe_id = r.id
             LEFT JOIN weeks w ON w.id = wr.week_id
+            WHERE r.archived_at IS NULL
             GROUP BY r.id
             """
         ).fetchall()
@@ -135,7 +136,7 @@ class MealService:
         rows = connection.execute(
             """
             SELECT wr.id AS weekly_recipe_id, wr.state, wr.was_proposed, wr.eaten_on,
-                   wr.position, r.id, r.name, r.category, r.url,
+                   wr.position, r.id, r.name, r.category, r.url, r.instructions,
                    MAX(CASE WHEN old_wr.state = 'accepted' AND old_w.id != w.id
                             THEN old_w.week_start END) AS last_eaten
             FROM weekly_recipes wr
@@ -223,7 +224,9 @@ class MealService:
         with self.database.transaction() as connection:
             week_id = self._ensure_week(connection, week_start)
             self._assert_unlocked(connection, week_id)
-            if connection.execute("SELECT id FROM recipes WHERE id = ?", (recipe_id,)).fetchone() is None:
+            if connection.execute(
+                "SELECT id FROM recipes WHERE id = ? AND archived_at IS NULL", (recipe_id,)
+            ).fetchone() is None:
                 raise ServiceError("Recipe not found.", 404)
             position = connection.execute(
                 "SELECT COALESCE(MAX(position), -1) + 1 AS position FROM weekly_recipes WHERE week_id = ?",
@@ -300,7 +303,7 @@ class MealService:
                 LEFT JOIN weekly_recipes wr ON wr.recipe_id = r.id
                 LEFT JOIN weeks w ON w.id = wr.week_id
                 LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
-                WHERE r.name LIKE ?
+                WHERE r.name LIKE ? AND r.archived_at IS NULL
                 GROUP BY r.id
                 ORDER BY r.name COLLATE NOCASE
                 LIMIT 500
@@ -311,7 +314,9 @@ class MealService:
 
     def get_recipe(self, recipe_id: int) -> dict[str, Any]:
         with self.database.transaction() as connection:
-            row = connection.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
+            row = connection.execute(
+                "SELECT * FROM recipes WHERE id = ? AND archived_at IS NULL", (recipe_id,)
+            ).fetchone()
             if row is None:
                 raise ServiceError("Recipe not found.", 404)
             return dict(row) | {"ingredients": self._recipe_ingredients(connection, recipe_id)}
@@ -322,11 +327,12 @@ class MealService:
         if category not in CATEGORIES:
             raise ServiceError("Choose a valid recipe category.")
         url = self._clean_url(payload.get("url"))
+        instructions = self._clean_instructions(payload.get("instructions"))
         with self.database.transaction() as connection:
             try:
                 cursor = connection.execute(
-                    "INSERT INTO recipes(name, category, url) VALUES (?, ?, ?)",
-                    (name, category, url),
+                    "INSERT INTO recipes(name, category, url, instructions) VALUES (?, ?, ?, ?)",
+                    (name, category, url, instructions),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ServiceError("A recipe with that name already exists.") from exc
@@ -342,13 +348,20 @@ class MealService:
         if category not in CATEGORIES:
             raise ServiceError("Choose a valid recipe category.")
         url = self._clean_url(payload.get("url"))
+        instructions = self._clean_instructions(payload.get("instructions"))
         with self.database.transaction() as connection:
-            if connection.execute("SELECT id FROM recipes WHERE id = ?", (recipe_id,)).fetchone() is None:
+            if connection.execute(
+                "SELECT id FROM recipes WHERE id = ? AND archived_at IS NULL", (recipe_id,)
+            ).fetchone() is None:
                 raise ServiceError("Recipe not found.", 404)
             try:
                 connection.execute(
-                    "UPDATE recipes SET name = ?, category = ?, url = ?, updated_at = ? WHERE id = ?",
-                    (name, category, url, utc_now(), recipe_id),
+                    """
+                    UPDATE recipes
+                    SET name = ?, category = ?, url = ?, instructions = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (name, category, url, instructions, utc_now(), recipe_id),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ServiceError("A recipe with that name already exists.") from exc
@@ -356,6 +369,29 @@ class MealService:
             return dict(connection.execute("SELECT * FROM recipes WHERE id = ?", (recipe_id,)).fetchone()) | {
                 "ingredients": self._recipe_ingredients(connection, recipe_id)
             }
+
+    def archive_recipe(self, recipe_id: int) -> dict[str, bool]:
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT id FROM recipes WHERE id = ? AND archived_at IS NULL", (recipe_id,)
+            ).fetchone()
+            if row is None:
+                raise ServiceError("Recipe not found.", 404)
+            connection.execute(
+                """
+                DELETE FROM weekly_recipes
+                WHERE recipe_id = ? AND week_id IN (
+                    SELECT id FROM weeks WHERE locked_at IS NULL
+                )
+                """,
+                (recipe_id,),
+            )
+            archived_at = utc_now()
+            connection.execute(
+                "UPDATE recipes SET archived_at = ?, updated_at = ? WHERE id = ?",
+                (archived_at, archived_at, recipe_id),
+            )
+            return {"deleted": True}
 
     def _replace_recipe_ingredients(
         self, connection: sqlite3.Connection, recipe_id: int, ingredients: Any
@@ -394,6 +430,17 @@ class MealService:
         if not isinstance(value, str) or not value.startswith(("http://", "https://")):
             raise ServiceError("Recipe URL must start with http:// or https://.")
         return value.strip()
+
+    @staticmethod
+    def _clean_instructions(value: Any) -> str | None:
+        if value in (None, ""):
+            return None
+        if not isinstance(value, str):
+            raise ServiceError("Instructions must be text.")
+        cleaned = value.strip()
+        if len(cleaned) > 1200:
+            raise ServiceError("Instructions must be 1,200 characters or fewer.")
+        return cleaned or None
 
     def list_ingredients(self, query: str = "") -> list[dict[str, Any]]:
         with self.database.transaction() as connection:
