@@ -1,0 +1,1 @@
+"""Meal Helper application package."""

@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#183c35">
+    <title>Meal Helper</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <header class="app-header">
+      <a class="brand" href="/" aria-label="Meal Helper home">
+        <span class="brand-mark">M</span>
+        <span>Meal Helper</span>
+      </a>
+      <nav class="main-tabs" aria-label="Main navigation">
+        <button class="tab active" data-view="week">This week</button>
+        <button class="tab" data-view="recipes">Recipes</button>
+      </nav>
+    </header>
+
+    <main>
+      <section id="week-view" class="view"></section>
+      <section id="recipes-view" class="view hidden"></section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <dialog id="recipe-dialog" class="dialog recipe-dialog">
+      <form id="recipe-form" method="dialog">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Recipe</p>
+            <h2 id="recipe-dialog-title">Edit recipe</h2>
+          </div>
+          <button type="button" class="icon-button dialog-close" aria-label="Close" title="Close">&times;</button>
+        </div>
+
+        <div class="form-grid">
+          <label class="field field-wide">
+            <span>Name</span>
+            <input id="recipe-name" name="name" required maxlength="160">
+          </label>
+          <label class="field">
+            <span>Category</span>
+            <select id="recipe-category" name="category" required></select>
+          </label>
+          <label class="field">
+            <span>Instructions URL</span>
+            <input id="recipe-url" name="url" type="url" placeholder="https://">
+          </label>
+        </div>
+
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Shopping</p>
+            <h3>Ingredients</h3>
+          </div>
+          <button type="button" id="add-ingredient-row" class="button secondary">+ Add ingredient</button>
+        </div>
+        <div id="ingredient-rows" class="ingredient-editor"></div>
+
+        <details class="new-ingredient-panel">
+          <summary>Create an ingredient</summary>
+          <div class="new-ingredient-fields">
+            <label class="field">
+              <span>Name</span>
+              <input id="new-ingredient-name" maxlength="100">
+            </label>
+            <label class="field">
+              <span>Default unit</span>
+              <select id="new-ingredient-unit"></select>
+            </label>
+            <label class="check-field">
+              <input id="new-ingredient-whole-foods" type="checkbox" checked>
+              <span>Buy at Whole Foods</span>
+            </label>
+            <button type="button" id="create-ingredient" class="button secondary">Create ingredient</button>
+          </div>
+        </details>
+
+        <div class="dialog-actions">
+          <button type="button" class="button ghost dialog-close">Cancel</button>
+          <button type="submit" class="button primary">Save recipe</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="add-recipe-dialog" class="dialog picker-dialog">
+      <div class="dialog-header">
+        <div>
+          <p class="eyebrow">This week</p>
+          <h2>Add a recipe</h2>
+        </div>
+        <button type="button" class="icon-button dialog-close" aria-label="Close" title="Close">&times;</button>
+      </div>
+      <div class="picker-toolbar">
+        <input id="recipe-picker-search" type="search" placeholder="Search recipes" aria-label="Search recipes">
+        <button id="create-recipe-for-week" class="button primary">+ New recipe</button>
+      </div>
+      <div id="recipe-picker-results" class="picker-results"></div>
+    </dialog>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

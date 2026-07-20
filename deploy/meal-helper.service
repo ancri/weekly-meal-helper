@@ -1,0 +1,20 @@
+[Unit]
+Description=Meal Helper web application
+After=network.target
+
+[Service]
+Type=simple
+User=meal-helper
+Group=meal-helper
+WorkingDirectory=/opt/meal-helper
+ExecStart=/usr/bin/python3 /opt/meal-helper/app.py --host 127.0.0.1 --port 8080
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/meal-helper/data
+
+[Install]
+WantedBy=multi-user.target
