@@ -12,6 +12,7 @@ from urllib.parse import parse_qs, urlparse
 
 from meal_helper.config import DATABASE_PATH, HISTORY_WORKBOOK, ROOT_DIR
 from meal_helper.database import Database
+from meal_helper.recipe_parser import OpenAIRecipeParser
 from meal_helper.service import MealService, ServiceError
 from meal_helper.workbook import read_historical_meals
 
@@ -25,7 +26,7 @@ def bootstrap(database_path: str | Path, workbook_path: str | Path = HISTORY_WOR
     workbook = Path(workbook_path)
     if workbook.exists():
         database.import_history(read_historical_meals(workbook))
-    return MealService(database)
+    return MealService(database, recipe_parser=OpenAIRecipeParser.from_environment())
 
 
 def make_handler(service: MealService):
@@ -68,6 +69,8 @@ def make_handler(service: MealService):
                 payload = self._body()
                 if parsed.path == "/api/recipes":
                     self._json(service.create_recipe(payload), 201)
+                elif parsed.path == "/api/recipes/parse-ingredients":
+                    self._json(service.parse_recipe_ingredients(payload))
                 elif parsed.path == "/api/ingredients":
                     self._json(service.create_ingredient(payload), 201)
                 elif parsed.path == "/api/suggestions":

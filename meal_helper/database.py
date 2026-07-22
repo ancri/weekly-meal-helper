@@ -71,6 +71,15 @@ CREATE TABLE IF NOT EXISTS suggestions (
 
 CREATE INDEX IF NOT EXISTS idx_suggestions_addressed
     ON suggestions(addressed, submitted_at);
+
+CREATE TABLE IF NOT EXISTS recipe_parse_requests (
+    id INTEGER PRIMARY KEY,
+    requested_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    succeeded INTEGER NOT NULL DEFAULT 0 CHECK (succeeded IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recipe_parse_requests_requested_at
+    ON recipe_parse_requests(requested_at);
 """
 
 

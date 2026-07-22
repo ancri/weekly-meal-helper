@@ -65,6 +65,20 @@
           </div>
           <button type="button" id="add-ingredient-row" class="button secondary">+ Add ingredient</button>
         </div>
+
+        <details class="ingredient-parser-panel">
+          <summary>Paste ingredient list</summary>
+          <div class="ingredient-parser-fields">
+            <label class="field">
+              <span>Unstructured ingredients</span>
+              <textarea id="recipe-ingredient-text" maxlength="4000" rows="5" placeholder="2 cans chickpeas&#10;1 tbsp olive oil&#10;3 cloves garlic"></textarea>
+            </label>
+            <div class="ingredient-parser-actions">
+              <span id="ingredient-parser-status" class="ingredient-parser-status" role="status" aria-live="polite"></span>
+              <button type="button" id="parse-recipe-ingredients" class="button secondary">Fill ingredients</button>
+            </div>
+          </div>
+        </details>
         <div id="ingredient-rows" class="ingredient-editor"></div>
 
         <details class="new-ingredient-panel">

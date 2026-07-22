@@ -532,6 +532,8 @@ async function openRecipe(recipeId = null, addToWeek = false) {
   document.querySelector("#new-ingredient-unit").innerHTML = unitOptions();
   document.querySelector("#new-ingredient-name").value = "";
   document.querySelector("#new-ingredient-whole-foods").checked = true;
+  document.querySelector("#recipe-ingredient-text").value = "";
+  document.querySelector("#ingredient-parser-status").textContent = "";
   renderIngredientRows();
   recipeDialog.showModal();
 }
@@ -550,10 +552,24 @@ function renderIngredientRows() {
   target.innerHTML = state.editorIngredients.map((item, index) => `
     <div class="ingredient-row" data-row="${index}">
       <select class="row-ingredient" aria-label="Ingredient">${ingredientOptions(item.id)}</select>
-      <input class="row-quantity" type="number" value="${h(item.quantity)}" min="0.01" step="0.01" aria-label="Quantity">
+      <div class="quantity-stepper">
+        <button type="button" data-adjust-quantity="-1" aria-label="Decrease quantity" title="Decrease quantity">&minus;</button>
+        <input class="row-quantity" type="number" value="${h(item.quantity)}" min="0.01" step="any" inputmode="decimal" aria-label="Quantity">
+        <button type="button" data-adjust-quantity="1" aria-label="Increase quantity" title="Increase quantity">+</button>
+      </div>
       <select class="row-unit" aria-label="Unit">${unitOptions(item.unit)}</select>
       <button type="button" class="remove-row" data-remove-row="${index}" aria-label="Remove ingredient" title="Remove ingredient">&times;</button>
     </div>`).join("");
+}
+
+function adjustQuantity(button) {
+  const input = button.closest(".quantity-stepper").querySelector(".row-quantity");
+  const direction = Number(button.dataset.adjustQuantity);
+  const current = Number(input.value) || 0;
+  const step = direction > 0 ? (current >= 1 ? 1 : 0.25) : (current > 1 ? 1 : 0.25);
+  const next = Math.max(0.25, Math.round((current + direction * step) * 100) / 100);
+  input.value = String(next);
+  input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 function captureIngredientRows() {
@@ -637,6 +653,44 @@ async function createIngredient() {
     notify("Ingredient created and added.");
   } catch (error) {
     notify(error.message, true);
+  }
+}
+
+async function parseRecipeIngredients() {
+  const text = document.querySelector("#recipe-ingredient-text").value;
+  const status = document.querySelector("#ingredient-parser-status");
+  const button = document.querySelector("#parse-recipe-ingredients");
+  captureIngredientRows();
+  if (state.editorIngredients.some((item) => item.id)
+      && !window.confirm("Replace the current ingredient rows with the parsed list?")) return;
+
+  button.disabled = true;
+  button.textContent = "Parsing...";
+  status.textContent = "";
+  try {
+    const result = await api("/api/recipes/parse-ingredients", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    if (result.ingredients.length) {
+      state.editorIngredients = result.ingredients.map((item) => ({
+        id: item.id,
+        quantity: item.quantity,
+        unit: item.unit,
+      }));
+      renderIngredientRows();
+    }
+    const matched = `${result.ingredients.length} ingredient${result.ingredients.length === 1 ? "" : "s"} filled`;
+    const unmatched = result.unmatched.length
+      ? ` Could not match: ${result.unmatched.join(", ")}.`
+      : "";
+    status.textContent = `${matched}.${unmatched} ${result.requests_remaining} requests remaining this hour.`;
+  } catch (error) {
+    status.textContent = error.message;
+    notify(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Fill ingredients";
   }
 }
 
@@ -804,6 +858,11 @@ document.addEventListener("click", async (event) => {
     state.editorIngredients.push({ id: 0, quantity: 1, unit: "pieces" });
     return renderIngredientRows();
   }
+
+  const quantityAdjustment = event.target.closest("[data-adjust-quantity]");
+  if (quantityAdjustment) return adjustQuantity(quantityAdjustment);
+
+  if (event.target.closest("#parse-recipe-ingredients")) return parseRecipeIngredients();
 
   const removeRow = event.target.closest("[data-remove-row]");
   if (removeRow) {

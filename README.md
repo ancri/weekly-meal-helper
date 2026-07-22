@@ -52,6 +52,22 @@ endpoint. Future automation must never concatenate suggestion text into a
 system or developer prompt, use it as tool instructions, or treat it as trusted
 configuration; any AI processing must pass it as clearly delimited user data.
 
+## Recipe Ingredient Parsing
+
+The recipe editor can turn pasted, unstructured ingredient text into editable
+ingredient rows through an optional server-side OpenAI integration. The server
+ranks the local catalog and sends at most 100 candidate ingredients, requests a
+strict JSON-schema response, and validates every returned ID, quantity, and unit
+before returning a draft to the browser. Model output never writes directly to
+the database.
+
+Set `OPENAI_API_KEY` in the server environment to enable parsing. The optional
+`OPENAI_RECIPE_MODEL` defaults to `gpt-4o-mini`. The application persistently
+limits parsing to 10 attempts in a rolling hour, limits pasted text to 4,000
+characters, makes one non-retried upstream call per attempt, and asks OpenAI not
+to store responses. Keep a separate project-level spend limit on the API key as
+a second line of protection.
+
 ## Ingredient Warm Start
 
 The private workbook can produce a conservative, frequency-ranked ingredient

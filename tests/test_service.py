@@ -4,7 +4,28 @@ import unittest
 from pathlib import Path
 
 from meal_helper.database import Database
+from meal_helper.recipe_parser import RecipeParserError
 from meal_helper.service import MealService, ServiceError
+
+
+class FakeRecipeParser:
+    def __init__(self):
+        self.calls = []
+
+    def parse(self, text, candidates, allowed_units):
+        self.calls.append((text, candidates, tuple(allowed_units)))
+        ingredient = next(item for item in candidates if item["name"] == "Garlic")
+        return {
+            "ingredients": [
+                {"ingredient_id": ingredient["id"], "quantity": 3, "unit": "cloves"}
+            ],
+            "unmatched": ["harissa paste"],
+        }
+
+
+class FailingRecipeParser:
+    def parse(self, text, candidates, allowed_units):
+        raise RecipeParserError("simulated upstream failure")
 
 
 class ServiceTests(unittest.TestCase):
@@ -186,6 +207,82 @@ class ServiceTests(unittest.TestCase):
                 with self.assertRaises(ServiceError):
                     self.service.create_suggestion({"text": text})
 
+    def test_recipe_ingredient_parser_returns_validated_catalog_rows(self):
+        garlic = self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+        self.service.create_ingredient(
+            {"name": "Olive oil", "default_unit": "tbsp", "whole_foods": True}
+        )
+        parser = FakeRecipeParser()
+        service = MealService(self.database, recipe_parser=parser)
+
+        result = service.parse_recipe_ingredients(
+            {"text": "3 cloves garlic\u200b and some harissa paste"}
+        )
+
+        self.assertEqual(
+            result["ingredients"],
+            [{"id": garlic["id"], "name": "Garlic", "quantity": 3.0, "unit": "cloves"}],
+        )
+        self.assertEqual(result["unmatched"], ["harissa paste"])
+        self.assertEqual(result["requests_remaining"], 9)
+        self.assertNotIn("\u200b", parser.calls[0][0])
+
+    def test_recipe_ingredient_parser_enforces_persistent_hourly_limit(self):
+        self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+        parser = FakeRecipeParser()
+        service = MealService(self.database, recipe_parser=parser)
+
+        for _ in range(10):
+            service.parse_recipe_ingredients({"text": "3 cloves garlic"})
+        with self.assertRaises(ServiceError) as raised:
+            service.parse_recipe_ingredients({"text": "3 cloves garlic"})
+
+        self.assertEqual(raised.exception.status, 429)
+        self.assertEqual(len(parser.calls), 10)
+        with self.database.transaction() as connection:
+            attempts = connection.execute(
+                "SELECT COUNT(*) FROM recipe_parse_requests"
+            ).fetchone()[0]
+        self.assertEqual(attempts, 10)
+
+    def test_recipe_ingredient_parser_requires_server_configuration(self):
+        self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+
+        with self.assertRaises(ServiceError) as raised:
+            self.service.parse_recipe_ingredients({"text": "3 cloves garlic"})
+
+        self.assertEqual(raised.exception.status, 503)
+        with self.database.transaction() as connection:
+            attempts = connection.execute(
+                "SELECT COUNT(*) FROM recipe_parse_requests"
+            ).fetchone()[0]
+        self.assertEqual(attempts, 0)
+
+    def test_failed_upstream_parse_still_consumes_quota_without_storing_text(self):
+        self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+        service = MealService(self.database, recipe_parser=FailingRecipeParser())
+
+        with self.assertRaises(ServiceError) as raised:
+            service.parse_recipe_ingredients({"text": "private recipe text"})
+
+        self.assertEqual(raised.exception.status, 502)
+        with self.database.transaction() as connection:
+            row = connection.execute("SELECT * FROM recipe_parse_requests").fetchone()
+            columns = {
+                column["name"]
+                for column in connection.execute("PRAGMA table_info(recipe_parse_requests)")
+            }
+        self.assertFalse(row["succeeded"])
+        self.assertNotIn("text", columns)
+
     def test_archive_recipe_removes_it_from_library_and_unlocked_weeks(self):
         recipe = self.service.create_recipe(
             {"name": "Discard this recipe", "category": "pastas", "ingredients": []}
@@ -277,9 +374,14 @@ class DatabaseMigrationTests(unittest.TestCase):
                 suggestion_columns = {
                     row["name"] for row in connection.execute("PRAGMA table_info(suggestions)")
                 }
+                parse_request_columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(recipe_parse_requests)")
+                }
             self.assertEqual(ingredient["name"], "Existing ingredient")
             self.assertIsNotNone(ingredient["updated_at"])
             self.assertIn("addressed", suggestion_columns)
+            self.assertIn("succeeded", parse_request_columns)
 
 
 if __name__ == "__main__":

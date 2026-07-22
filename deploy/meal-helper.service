@@ -7,6 +7,7 @@ Type=simple
 User=meal-helper
 Group=meal-helper
 WorkingDirectory=/opt/meal-helper
+EnvironmentFile=-/etc/meal-helper.env
 ExecStart=/usr/bin/python3 /opt/meal-helper/app.py --host 127.0.0.1 --port 8080
 Restart=on-failure
 RestartSec=3

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import random
 import re
 import sqlite3
@@ -8,8 +9,17 @@ import unicodedata
 from datetime import date, timedelta
 from typing import Any
 
-from .config import ALLOWED_UNITS, CATEGORIES, MEALS_TO_CHOOSE, PROPOSALS_PER_CATEGORY
+from .config import (
+    ALLOWED_UNITS,
+    CATEGORIES,
+    MEALS_TO_CHOOSE,
+    PROPOSALS_PER_CATEGORY,
+    RECIPE_PARSE_MAX_CANDIDATES,
+    RECIPE_PARSE_MAX_TEXT_LENGTH,
+    RECIPE_PARSE_REQUESTS_PER_HOUR,
+)
 from .database import Database, utc_now
+from .recipe_parser import RecipeParserError, select_ingredient_candidates
 from .workbook import monday_for
 
 
@@ -38,8 +48,9 @@ def _parse_week_start(value: str | None) -> date:
 
 
 class MealService:
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, recipe_parser: Any = None):
         self.database = database
+        self.recipe_parser = recipe_parser
 
     def get_week(self, week: str | None = None) -> dict[str, Any]:
         week_start = _parse_week_start(week)
@@ -545,6 +556,145 @@ class MealService:
                 )
             connection.execute("DELETE FROM ingredients WHERE id = ?", (ingredient_id,))
             return {"deleted": True}
+
+    def parse_recipe_ingredients(self, payload: dict[str, Any]) -> dict[str, Any]:
+        text = self._clean_recipe_source_text(payload.get("text"))
+        if self.recipe_parser is None:
+            raise ServiceError("Ingredient parsing is not configured yet.", 503)
+
+        with self.database.transaction() as connection:
+            catalog = [
+                dict(row)
+                for row in connection.execute(
+                    """
+                    SELECT i.id, i.name, i.default_unit,
+                           COUNT(DISTINCT ri.recipe_id) AS usage_count
+                    FROM ingredients i
+                    LEFT JOIN recipe_ingredients ri ON ri.ingredient_id = i.id
+                    GROUP BY i.id
+                    """
+                )
+            ]
+        if not catalog:
+            raise ServiceError("Add ingredients to the catalog before parsing a recipe.", 409)
+        candidates = select_ingredient_candidates(
+            text, catalog, RECIPE_PARSE_MAX_CANDIDATES
+        )
+        request_id, remaining = self._reserve_recipe_parse_request()
+        try:
+            parsed = self.recipe_parser.parse(text, candidates, ALLOWED_UNITS)
+            result = self._validated_recipe_parse_result(parsed, candidates)
+        except RecipeParserError as exc:
+            raise ServiceError("Ingredient parsing is temporarily unavailable.", 502) from exc
+
+        with self.database.transaction() as connection:
+            connection.execute(
+                "UPDATE recipe_parse_requests SET succeeded = 1 WHERE id = ?",
+                (request_id,),
+            )
+        return result | {"requests_remaining": remaining}
+
+    def _reserve_recipe_parse_request(self) -> tuple[int, int]:
+        connection = self.database.connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "DELETE FROM recipe_parse_requests WHERE requested_at < datetime('now', '-7 days')"
+            )
+            used = connection.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM recipe_parse_requests
+                WHERE requested_at >= datetime('now', '-1 hour')
+                """
+            ).fetchone()["count"]
+            if used >= RECIPE_PARSE_REQUESTS_PER_HOUR:
+                connection.rollback()
+                raise ServiceError(
+                    "The hourly ingredient parsing limit has been reached. Try again later.",
+                    429,
+                )
+            cursor = connection.execute("INSERT INTO recipe_parse_requests DEFAULT VALUES")
+            connection.commit()
+            return cursor.lastrowid, RECIPE_PARSE_REQUESTS_PER_HOUR - used - 1
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _validated_recipe_parse_result(
+        value: Any, candidates: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            raise RecipeParserError("The parser returned an invalid result.")
+        ingredients = value.get("ingredients")
+        unmatched = value.get("unmatched")
+        if not isinstance(ingredients, list) or not isinstance(unmatched, list):
+            raise RecipeParserError("The parser returned an invalid result.")
+
+        by_id = {int(candidate["id"]): candidate for candidate in candidates}
+        normalized: list[dict[str, Any]] = []
+        seen: set[int] = set()
+        for item in ingredients:
+            if not isinstance(item, dict):
+                raise RecipeParserError("The parser returned an invalid ingredient.")
+            ingredient_id = item.get("ingredient_id")
+            quantity = item.get("quantity")
+            unit = item.get("unit")
+            if isinstance(ingredient_id, bool) or not isinstance(ingredient_id, int):
+                raise RecipeParserError("The parser returned an invalid ingredient ID.")
+            if ingredient_id not in by_id or ingredient_id in seen:
+                raise RecipeParserError("The parser returned an unavailable ingredient ID.")
+            if isinstance(quantity, bool) or not isinstance(quantity, (int, float)):
+                raise RecipeParserError("The parser returned an invalid quantity.")
+            quantity = float(quantity)
+            if not math.isfinite(quantity) or quantity <= 0 or quantity > 10_000:
+                raise RecipeParserError("The parser returned an invalid quantity.")
+            if unit not in ALLOWED_UNITS:
+                raise RecipeParserError("The parser returned an invalid unit.")
+            seen.add(ingredient_id)
+            normalized.append(
+                {
+                    "id": ingredient_id,
+                    "name": by_id[ingredient_id]["name"],
+                    "quantity": quantity,
+                    "unit": unit,
+                }
+            )
+
+        cleaned_unmatched: list[str] = []
+        for item in unmatched[:30]:
+            if not isinstance(item, str):
+                raise RecipeParserError("The parser returned invalid unmatched text.")
+            cleaned = " ".join(item.split())[:160]
+            if cleaned:
+                cleaned_unmatched.append(cleaned)
+        return {"ingredients": normalized, "unmatched": cleaned_unmatched}
+
+    @staticmethod
+    def _clean_recipe_source_text(value: Any) -> str:
+        if not isinstance(value, str):
+            raise ServiceError("Paste an ingredient list to parse.")
+        normalized = (
+            unicodedata.normalize("NFKC", value)
+            .replace("\r\n", "\n")
+            .replace("\r", "\n")
+        )
+        normalized = "".join(
+            character
+            for character in normalized
+            if character == "\n" or unicodedata.category(character) not in {"Cc", "Cf", "Cs"}
+        ).strip()
+        if not normalized:
+            raise ServiceError("Paste an ingredient list to parse.")
+        if len(normalized) > RECIPE_PARSE_MAX_TEXT_LENGTH:
+            raise ServiceError(
+                f"Ingredient text must be {RECIPE_PARSE_MAX_TEXT_LENGTH:,} characters or fewer."
+            )
+        return normalized
 
     def create_suggestion(self, payload: dict[str, Any]) -> dict[str, Any]:
         suggestion = self._clean_suggestion(payload.get("text"))
