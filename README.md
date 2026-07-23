@@ -65,8 +65,10 @@ Set `OPENAI_API_KEY` in the server environment to enable parsing. The optional
 `OPENAI_RECIPE_MODEL` defaults to `gpt-4o-mini`. The application persistently
 limits parsing to 10 attempts in a rolling hour, limits pasted text to 4,000
 characters, makes one non-retried upstream call per attempt, and asks OpenAI not
-to store responses. Keep a separate project-level spend limit on the API key as
-a second line of protection.
+to store responses. Keep the project's monthly budget alert low and configure
+conservative API billing or prepaid-credit controls as a second line of
+protection. OpenAI project budgets are soft notification thresholds, not hard
+spending caps.
 
 ## Ingredient Warm Start
 
