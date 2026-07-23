@@ -1123,6 +1123,14 @@ document.addEventListener("focusin", (event) => {
   }
 });
 
+document.addEventListener("focusout", (event) => {
+  if (!event.target.matches(".row-ingredient-search")) return;
+  const combobox = event.target.closest(".ingredient-combobox");
+  if (!combobox.querySelector(".row-ingredient-id").value) {
+    resolveExactIngredient(event.target);
+  }
+});
+
 document.addEventListener("input", (event) => {
   if (event.target.matches(".row-ingredient-search")) {
     event.target.removeAttribute("aria-invalid");
