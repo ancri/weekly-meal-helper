@@ -538,9 +538,49 @@ async function openRecipe(recipeId = null, addToWeek = false) {
   recipeDialog.showModal();
 }
 
-function ingredientOptions(selected) {
-  return `<option value="">Choose ingredient</option>${state.ingredients.map((ingredient) => `
-    <option value="${ingredient.id}" ${Number(selected) === ingredient.id ? "selected" : ""}>${h(ingredient.name)}${ingredient.whole_foods ? "" : " (elsewhere)"}</option>`).join("")}`;
+function ingredientMatches(query, limit = 6) {
+  const normalized = query.trim().toLocaleLowerCase();
+  if (normalized.length < 2) return [];
+
+  return state.ingredients
+    .map((ingredient) => {
+      const name = ingredient.name.toLocaleLowerCase();
+      const words = name.split(/[\s(/,-]+/);
+      let rank = 3;
+      if (name.startsWith(normalized)) rank = 0;
+      else if (words.some((word) => word.startsWith(normalized))) rank = 1;
+      else if (name.includes(normalized)) rank = 2;
+      return { ingredient, rank };
+    })
+    .filter((match) => match.rank < 3)
+    .sort((first, second) =>
+      first.rank - second.rank
+      || Number(second.ingredient.usage_count || 0) - Number(first.ingredient.usage_count || 0)
+      || first.ingredient.name.localeCompare(second.ingredient.name, undefined, { sensitivity: "base" })
+    )
+    .slice(0, limit)
+    .map((match) => match.ingredient);
+}
+
+function highlightedMatch(name, query) {
+  const normalized = query.trim().toLocaleLowerCase();
+  const match = name.toLocaleLowerCase().indexOf(normalized);
+  if (match < 0) return h(name);
+  return `${h(name.slice(0, match))}<mark>${h(name.slice(match, match + normalized.length))}</mark>${h(name.slice(match + normalized.length))}`;
+}
+
+function ingredientCombobox(item, index) {
+  const selected = state.ingredients.find((ingredient) => ingredient.id === Number(item.id));
+  const listId = `ingredient-suggestions-${index}`;
+  return `
+    <div class="ingredient-combobox" data-selected-id="${selected?.id || ""}" data-active-index="-1">
+      <input class="row-ingredient-search" type="text" value="${h(selected?.name || "")}"
+        placeholder="Type 2+ letters" autocomplete="off" spellcheck="false"
+        role="combobox" aria-label="Ingredient" aria-autocomplete="list"
+        aria-expanded="false" aria-controls="${listId}">
+      <input class="row-ingredient-id" type="hidden" value="${selected?.id || ""}">
+      <div id="${listId}" class="ingredient-suggestions" role="listbox" hidden></div>
+    </div>`;
 }
 
 function renderIngredientRows() {
@@ -551,7 +591,7 @@ function renderIngredientRows() {
   }
   target.innerHTML = state.editorIngredients.map((item, index) => `
     <div class="ingredient-row" data-row="${index}">
-      <select class="row-ingredient" aria-label="Ingredient">${ingredientOptions(item.id)}</select>
+      ${ingredientCombobox(item, index)}
       <div class="quantity-stepper">
         <button type="button" data-adjust-quantity="-1" aria-label="Decrease quantity" title="Decrease quantity">&minus;</button>
         <input class="row-quantity" type="number" value="${h(item.quantity)}" min="0.01" step="any" inputmode="decimal" aria-label="Quantity">
@@ -560,6 +600,78 @@ function renderIngredientRows() {
       <select class="row-unit" aria-label="Unit">${unitOptions(item.unit)}</select>
       <button type="button" class="remove-row" data-remove-row="${index}" aria-label="Remove ingredient" title="Remove ingredient">&times;</button>
     </div>`).join("");
+}
+
+function closeIngredientSuggestions(combobox) {
+  const input = combobox.querySelector(".row-ingredient-search");
+  const suggestions = combobox.querySelector(".ingredient-suggestions");
+  suggestions.hidden = true;
+  suggestions.innerHTML = "";
+  combobox.dataset.activeIndex = "-1";
+  input.setAttribute("aria-expanded", "false");
+  input.removeAttribute("aria-activedescendant");
+}
+
+function setActiveIngredientSuggestion(combobox, index) {
+  const options = [...combobox.querySelectorAll(".ingredient-suggestion")];
+  if (!options.length) return;
+  const activeIndex = (index + options.length) % options.length;
+  options.forEach((option, optionIndex) => {
+    option.classList.toggle("active", optionIndex === activeIndex);
+    option.setAttribute("aria-selected", optionIndex === activeIndex ? "true" : "false");
+  });
+  combobox.dataset.activeIndex = String(activeIndex);
+  combobox.querySelector(".row-ingredient-search")
+    .setAttribute("aria-activedescendant", options[activeIndex].id);
+}
+
+function updateIngredientSuggestions(input) {
+  const combobox = input.closest(".ingredient-combobox");
+  const hiddenInput = combobox.querySelector(".row-ingredient-id");
+  const selected = state.ingredients.find(
+    (ingredient) => ingredient.id === Number(hiddenInput.value)
+  );
+  if (!selected || input.value !== selected.name) {
+    hiddenInput.value = "";
+    combobox.dataset.selectedId = "";
+  }
+
+  const query = input.value.trim();
+  if (query.length < 2) {
+    closeIngredientSuggestions(combobox);
+    return;
+  }
+
+  const suggestions = combobox.querySelector(".ingredient-suggestions");
+  const matches = ingredientMatches(query);
+  suggestions.innerHTML = matches.length
+    ? matches.map((ingredient, index) => `
+      <div id="${suggestions.id}-option-${index}" class="ingredient-suggestion"
+        role="option" aria-selected="false" data-ingredient-id="${ingredient.id}">
+        <span>${highlightedMatch(ingredient.name, query)}</span>
+        ${ingredient.whole_foods ? "" : "<small>Elsewhere</small>"}
+      </div>`).join("")
+    : '<div class="ingredient-no-match">No matching ingredients</div>';
+  suggestions.hidden = false;
+  input.setAttribute("aria-expanded", "true");
+  if (matches.length) setActiveIngredientSuggestion(combobox, 0);
+  else {
+    combobox.dataset.activeIndex = "-1";
+    input.removeAttribute("aria-activedescendant");
+  }
+}
+
+function chooseIngredientSuggestion(option) {
+  const combobox = option.closest(".ingredient-combobox");
+  const ingredient = state.ingredients.find(
+    (item) => item.id === Number(option.dataset.ingredientId)
+  );
+  if (!ingredient) return;
+  combobox.querySelector(".row-ingredient-search").value = ingredient.name;
+  combobox.querySelector(".row-ingredient-id").value = String(ingredient.id);
+  combobox.closest(".ingredient-row").querySelector(".row-unit").value = ingredient.default_unit;
+  combobox.dataset.selectedId = String(ingredient.id);
+  closeIngredientSuggestions(combobox);
 }
 
 function adjustQuantity(button) {
@@ -574,7 +686,7 @@ function adjustQuantity(button) {
 
 function captureIngredientRows() {
   state.editorIngredients = [...document.querySelectorAll(".ingredient-row")].map((row) => ({
-    id: Number(row.querySelector(".row-ingredient").value),
+    id: Number(row.querySelector(".row-ingredient-id").value),
     quantity: Number(row.querySelector(".row-quantity").value),
     unit: row.querySelector(".row-unit").value,
   }));
@@ -582,6 +694,15 @@ function captureIngredientRows() {
 
 async function saveRecipe(event) {
   event.preventDefault();
+  const unresolved = [...document.querySelectorAll(".ingredient-row")].find((row) =>
+    row.querySelector(".row-ingredient-search").value.trim()
+    && !row.querySelector(".row-ingredient-id").value
+  );
+  if (unresolved) {
+    unresolved.querySelector(".row-ingredient-search").focus();
+    notify("Choose an ingredient from the matching suggestions.", true);
+    return;
+  }
   captureIngredientRows();
   const ingredients = state.editorIngredients.filter((item) => item.id);
   const payload = {
@@ -764,6 +885,17 @@ function switchView(view) {
 }
 
 document.addEventListener("click", async (event) => {
+  const ingredientSuggestion = event.target.closest(".ingredient-suggestion");
+  if (ingredientSuggestion) {
+    event.preventDefault();
+    chooseIngredientSuggestion(ingredientSuggestion);
+    return;
+  }
+
+  document.querySelectorAll(".ingredient-combobox").forEach((combobox) => {
+    if (!combobox.contains(event.target)) closeIngredientSuggestions(combobox);
+  });
+
   if (event.target.closest("#open-suggestion")) return openSuggestion();
 
   const tab = event.target.closest("[data-view]");
@@ -856,7 +988,9 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("#add-ingredient-row")) {
     captureIngredientRows();
     state.editorIngredients.push({ id: 0, quantity: 1, unit: "pieces" });
-    return renderIngredientRows();
+    renderIngredientRows();
+    document.querySelector(".ingredient-row:last-child .row-ingredient-search")?.focus();
+    return;
   }
 
   const quantityAdjustment = event.target.closest("[data-adjust-quantity]");
@@ -876,13 +1010,51 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.target.matches(".row-ingredient-search")) {
+    const combobox = event.target.closest(".ingredient-combobox");
+    const options = [...combobox.querySelectorAll(".ingredient-suggestion")];
+    const activeIndex = Number(combobox.dataset.activeIndex);
+    if (event.key === "ArrowDown" && options.length) {
+      event.preventDefault();
+      setActiveIngredientSuggestion(combobox, activeIndex + 1);
+      return;
+    }
+    if (event.key === "ArrowUp" && options.length) {
+      event.preventDefault();
+      setActiveIngredientSuggestion(combobox, activeIndex < 0 ? options.length - 1 : activeIndex - 1);
+      return;
+    }
+    if (event.key === "Enter" && activeIndex >= 0 && options[activeIndex]) {
+      event.preventDefault();
+      chooseIngredientSuggestion(options[activeIndex]);
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeIngredientSuggestions(combobox);
+      return;
+    }
+  }
+
   if ((event.key === "Enter" || event.key === " ") && event.target.matches(".meal-card")) {
     event.preventDefault();
     openRecipe(Number(event.target.dataset.openRecipe));
   }
 });
 
+document.addEventListener("focusin", (event) => {
+  document.querySelectorAll(".ingredient-combobox").forEach((combobox) => {
+    if (!combobox.contains(event.target)) closeIngredientSuggestions(combobox);
+  });
+  if (event.target.matches(".row-ingredient-search")
+      && !event.target.closest(".ingredient-combobox").querySelector(".row-ingredient-id").value
+      && event.target.value.trim().length >= 2) {
+    updateIngredientSuggestions(event.target);
+  }
+});
+
 document.addEventListener("input", (event) => {
+  if (event.target.matches(".row-ingredient-search")) updateIngredientSuggestions(event.target);
   if (event.target.matches("#recipe-picker-search")) renderRecipePicker(event.target.value);
   if (event.target.matches("#recipe-search")) {
     state.recipeSearch = event.target.value;
