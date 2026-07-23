@@ -585,6 +585,17 @@ class MealService:
             parsed = self.recipe_parser.parse(text, candidates, ALLOWED_UNITS)
             result = self._validated_recipe_parse_result(parsed, candidates)
         except RecipeParserError as exc:
+            if exc.code in {"insufficient_quota", "billing_hard_limit_reached"}:
+                raise ServiceError(
+                    "OpenAI API quota is unavailable. Check the API project's billing and usage limits.",
+                    503,
+                ) from exc
+            if exc.code == "invalid_api_key":
+                raise ServiceError("OpenAI rejected the configured API key.", 503) from exc
+            if exc.code == "rate_limit_exceeded":
+                raise ServiceError(
+                    "OpenAI is rate-limiting ingredient parsing. Try again shortly.", 429
+                ) from exc
             raise ServiceError("Ingredient parsing is temporarily unavailable.", 502) from exc
 
         with self.database.transaction() as connection:

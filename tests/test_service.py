@@ -24,8 +24,11 @@ class FakeRecipeParser:
 
 
 class FailingRecipeParser:
+    def __init__(self, code=None):
+        self.code = code
+
     def parse(self, text, candidates, allowed_units):
-        raise RecipeParserError("simulated upstream failure")
+        raise RecipeParserError("simulated upstream failure", self.code)
 
 
 class ServiceTests(unittest.TestCase):
@@ -282,6 +285,20 @@ class ServiceTests(unittest.TestCase):
             }
         self.assertFalse(row["succeeded"])
         self.assertNotIn("text", columns)
+
+    def test_openai_quota_error_is_actionable(self):
+        self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+        service = MealService(
+            self.database, recipe_parser=FailingRecipeParser("insufficient_quota")
+        )
+
+        with self.assertRaises(ServiceError) as raised:
+            service.parse_recipe_ingredients({"text": "3 cloves garlic"})
+
+        self.assertEqual(raised.exception.status, 503)
+        self.assertIn("billing", raised.exception.message)
 
     def test_archive_recipe_removes_it_from_library_and_unlocked_weeks(self):
         recipe = self.service.create_recipe(

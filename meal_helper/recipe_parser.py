@@ -16,7 +16,9 @@ _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 class RecipeParserError(Exception):
-    pass
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 def select_ingredient_candidates(
@@ -168,7 +170,14 @@ class OpenAIRecipeParser:
             with self.opener(request, timeout=35) as response:
                 payload = json.loads(response.read())
         except HTTPError as exc:
-            raise RecipeParserError(f"OpenAI returned HTTP {exc.code}.") from exc
+            error_code = None
+            try:
+                error_code = json.loads(exc.read() or b"{}").get("error", {}).get("code")
+            except (AttributeError, json.JSONDecodeError, UnicodeDecodeError):
+                pass
+            raise RecipeParserError(
+                f"OpenAI returned HTTP {exc.code}.", error_code
+            ) from exc
         except (URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RecipeParserError("OpenAI did not return a usable response.") from exc
 

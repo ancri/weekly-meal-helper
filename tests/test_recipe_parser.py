@@ -1,5 +1,7 @@
 import json
 import unittest
+from io import BytesIO
+from urllib.error import HTTPError
 
 from meal_helper.recipe_parser import (
     OpenAIRecipeParser,
@@ -117,6 +119,31 @@ class RecipeParserTests(unittest.TestCase):
                 [{"id": 7, "name": "Chickpeas", "default_unit": "cups"}],
                 ("cups",),
             )
+
+    def test_openai_http_error_preserves_safe_error_code(self):
+        def opener(request, timeout):
+            raise HTTPError(
+                request.full_url,
+                429,
+                "Too Many Requests",
+                {},
+                BytesIO(
+                    json.dumps(
+                        {"error": {"code": "insufficient_quota", "message": "not returned"}}
+                    ).encode()
+                ),
+            )
+
+        parser = OpenAIRecipeParser("secret-key", opener=opener)
+
+        with self.assertRaises(RecipeParserError) as raised:
+            parser.parse(
+                "one cup chickpeas",
+                [{"id": 7, "name": "Chickpeas", "default_unit": "cups"}],
+                ("cups",),
+            )
+
+        self.assertEqual(raised.exception.code, "insufficient_quota")
 
 
 if __name__ == "__main__":
