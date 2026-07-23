@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from meal_helper.config import RECIPE_PARSE_REQUESTS_PER_HOUR
 from meal_helper.database import Database
 from meal_helper.recipe_parser import RecipeParserError
 from meal_helper.service import MealService, ServiceError
@@ -77,8 +78,52 @@ class ServiceTests(unittest.TestCase):
 
         self.assertFalse(unlocked["locked"])
         self.assertEqual(unlocked["accepted_count"], 3)
-        changed = self.service.set_decision(unlocked["items"][0]["weekly_recipe_id"], "pending")
+        changed = self.service.set_decision(
+            unlocked["items"][0]["weekly_recipe_id"], "pending"
+        )
         self.assertEqual(changed["accepted_count"], 2)
+
+    def test_suggestion_vote_is_persisted_and_can_be_cleared_after_lock(self):
+        week = self.service.get_week("2026-07-20")
+        target = week["items"][0]
+
+        voted = self.service.set_suggestion_vote(
+            target["weekly_recipe_id"], "good"
+        )
+        self.assertEqual(
+            next(
+                item
+                for item in voted["items"]
+                if item["weekly_recipe_id"] == target["weekly_recipe_id"]
+            )["suggestion_vote"],
+            "good",
+        )
+
+        for item in voted["items"][:3]:
+            voted = self.service.set_decision(item["weekly_recipe_id"], "accepted")
+        self.service.lock_week(voted["week_start"])
+        cleared = self.service.set_suggestion_vote(
+            target["weekly_recipe_id"], None
+        )
+        self.assertIsNone(
+            next(
+                item
+                for item in cleared["items"]
+                if item["weekly_recipe_id"] == target["weekly_recipe_id"]
+            )["suggestion_vote"]
+        )
+
+    def test_manually_added_meal_cannot_be_rated_as_a_suggestion(self):
+        recipe = self.service.create_recipe(
+            {"name": "Manual meal", "category": "pastas", "ingredients": []}
+        )
+        week = self.service.add_recipe_to_week("2026-08-03", recipe["id"])
+        target = next(item for item in week["items"] if item["id"] == recipe["id"])
+
+        with self.assertRaises(ServiceError) as raised:
+            self.service.set_suggestion_vote(target["weekly_recipe_id"], "bad")
+
+        self.assertEqual(raised.exception.status, 409)
 
     def test_shopping_list_combines_quantities_and_sources(self):
         week = self.service.get_week("2026-07-20")
@@ -229,8 +274,63 @@ class ServiceTests(unittest.TestCase):
             [{"id": garlic["id"], "name": "Garlic", "quantity": 3.0, "unit": "cloves"}],
         )
         self.assertEqual(result["unmatched"], ["harissa paste"])
-        self.assertEqual(result["requests_remaining"], 9)
+        self.assertEqual(
+            result["requests_remaining"], RECIPE_PARSE_REQUESTS_PER_HOUR - 1
+        )
         self.assertNotIn("\u200b", parser.calls[0][0])
+
+    def test_week_queues_empty_suggested_recipes_for_enrichment(self):
+        self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+        service = MealService(self.database, recipe_parser=FakeRecipeParser())
+        queued = []
+        service._queue_recipe_enrichment = queued.extend
+
+        week = service.get_week("2026-08-10")
+
+        self.assertEqual(set(queued), {item["id"] for item in week["items"]})
+
+    def test_automatic_enrichment_persists_validated_ingredients_once(self):
+        garlic = self.service.create_ingredient(
+            {"name": "Garlic", "default_unit": "cloves", "whole_foods": True}
+        )
+        recipe = self.service.create_recipe(
+            {"name": "Garlic soup", "category": "soups_stews", "ingredients": []}
+        )
+        parser = FakeRecipeParser()
+        service = MealService(self.database, recipe_parser=parser)
+
+        result = service.enrich_recipe_ingredients(recipe["id"])
+        second = service.enrich_recipe_ingredients(recipe["id"])
+
+        self.assertTrue(result["enriched"])
+        self.assertEqual(second["reason"], "already_populated")
+        self.assertEqual(len(parser.calls), 1)
+        self.assertEqual(
+            service.get_recipe(recipe["id"])["ingredients"],
+            [
+                {
+                    "id": garlic["id"],
+                    "name": "Garlic",
+                    "whole_foods": 1,
+                    "default_unit": "cloves",
+                    "quantity": 3.0,
+                    "unit": "cloves",
+                }
+            ],
+        )
+        with self.database.transaction() as connection:
+            stored = connection.execute(
+                """
+                SELECT ingredient_enrichment_attempted_at,
+                       ingredient_enrichment_succeeded_at
+                FROM recipes WHERE id = ?
+                """,
+                (recipe["id"],),
+            ).fetchone()
+        self.assertIsNotNone(stored["ingredient_enrichment_attempted_at"])
+        self.assertIsNotNone(stored["ingredient_enrichment_succeeded_at"])
 
     def test_recipe_ingredient_parser_enforces_persistent_hourly_limit(self):
         self.service.create_ingredient(
@@ -239,18 +339,18 @@ class ServiceTests(unittest.TestCase):
         parser = FakeRecipeParser()
         service = MealService(self.database, recipe_parser=parser)
 
-        for _ in range(10):
+        for _ in range(RECIPE_PARSE_REQUESTS_PER_HOUR):
             service.parse_recipe_ingredients({"text": "3 cloves garlic"})
         with self.assertRaises(ServiceError) as raised:
             service.parse_recipe_ingredients({"text": "3 cloves garlic"})
 
         self.assertEqual(raised.exception.status, 429)
-        self.assertEqual(len(parser.calls), 10)
+        self.assertEqual(len(parser.calls), RECIPE_PARSE_REQUESTS_PER_HOUR)
         with self.database.transaction() as connection:
             attempts = connection.execute(
                 "SELECT COUNT(*) FROM recipe_parse_requests"
             ).fetchone()[0]
-        self.assertEqual(attempts, 10)
+        self.assertEqual(attempts, RECIPE_PARSE_REQUESTS_PER_HOUR)
 
     def test_recipe_ingredient_parser_requires_server_configuration(self):
         self.service.create_ingredient(
@@ -360,6 +460,8 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ).fetchone()
             self.assertIn("instructions", columns)
             self.assertIn("archived_at", columns)
+            self.assertIn("ingredient_enrichment_attempted_at", columns)
+            self.assertIn("ingredient_enrichment_succeeded_at", columns)
             self.assertEqual(recipe["name"], "Existing recipe")
             self.assertIsNone(recipe["instructions"])
             self.assertIsNone(recipe["archived_at"])
@@ -399,6 +501,36 @@ class DatabaseMigrationTests(unittest.TestCase):
             self.assertIsNotNone(ingredient["updated_at"])
             self.assertIn("addressed", suggestion_columns)
             self.assertIn("succeeded", parse_request_columns)
+
+    def test_initialize_adds_suggestion_vote_to_existing_weekly_recipes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy-weekly-recipes.sqlite3"
+            with sqlite3.connect(path) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE weekly_recipes (
+                        id INTEGER PRIMARY KEY,
+                        week_id INTEGER NOT NULL,
+                        recipe_id INTEGER NOT NULL,
+                        state TEXT NOT NULL DEFAULT 'pending',
+                        was_proposed INTEGER NOT NULL DEFAULT 1,
+                        eaten_on TEXT,
+                        position INTEGER NOT NULL DEFAULT 0,
+                        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE (week_id, recipe_id)
+                    )
+                    """
+                )
+
+            database = Database(path)
+            database.initialize()
+
+            with database.transaction() as connection:
+                columns = {
+                    row["name"]
+                    for row in connection.execute("PRAGMA table_info(weekly_recipes)")
+                }
+            self.assertIn("suggestion_vote", columns)
 
 
 if __name__ == "__main__":

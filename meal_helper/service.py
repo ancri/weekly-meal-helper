@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
+import queue
 import random
 import re
 import sqlite3
+import threading
 import unicodedata
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from .config import (
@@ -21,6 +24,10 @@ from .config import (
 from .database import Database, utc_now
 from .recipe_parser import RecipeParserError, select_ingredient_candidates
 from .workbook import monday_for
+
+
+LOGGER = logging.getLogger(__name__)
+ENRICHMENT_RETRY_COOLDOWN = timedelta(hours=24)
 
 
 class ServiceError(Exception):
@@ -51,6 +58,10 @@ class MealService:
     def __init__(self, database: Database, recipe_parser: Any = None):
         self.database = database
         self.recipe_parser = recipe_parser
+        self._enrichment_queue: queue.Queue[int] = queue.Queue()
+        self._enrichment_pending: set[int] = set()
+        self._enrichment_lock = threading.Lock()
+        self._enrichment_worker: threading.Thread | None = None
 
     def get_week(self, week: str | None = None) -> dict[str, Any]:
         week_start = _parse_week_start(week)
@@ -62,7 +73,15 @@ class MealService:
             ).fetchone()["count"]
             if not record["locked_at"] and existing == 0:
                 self._generate_proposal(connection, week_id, week_start)
-            return self._week_payload(connection, week_id)
+            payload = self._week_payload(connection, week_id)
+        self._queue_recipe_enrichment(
+            [
+                item["id"]
+                for item in payload["items"]
+                if item["was_proposed"] and not item["ingredients"]
+            ]
+        )
+        return payload
 
     def _ensure_week(self, connection: sqlite3.Connection, week_start: date) -> int:
         connection.execute(
@@ -148,8 +167,9 @@ class MealService:
         week = connection.execute("SELECT * FROM weeks WHERE id = ?", (week_id,)).fetchone()
         rows = connection.execute(
             """
-            SELECT wr.id AS weekly_recipe_id, wr.state, wr.was_proposed, wr.eaten_on,
-                   wr.position, r.id, r.name, r.category, r.url, r.instructions,
+            SELECT wr.id AS weekly_recipe_id, wr.state, wr.suggestion_vote,
+                   wr.was_proposed, wr.eaten_on, wr.position,
+                   r.id, r.name, r.category, r.url, r.instructions,
                    MAX(CASE WHEN old_wr.state = 'accepted' AND old_w.id != w.id
                             THEN old_w.week_start END) AS last_eaten
             FROM weekly_recipes wr
@@ -229,6 +249,26 @@ class MealService:
                     raise ServiceError(f"Choose exactly {MEALS_TO_CHOOSE} meals.")
             connection.execute(
                 "UPDATE weekly_recipes SET state = ? WHERE id = ?", (state, weekly_recipe_id)
+            )
+            return self._week_payload(connection, row["week_id"])
+
+    def set_suggestion_vote(
+        self, weekly_recipe_id: int, vote: str | None
+    ) -> dict[str, Any]:
+        if vote not in {None, "good", "bad"}:
+            raise ServiceError("Unknown suggestion vote.")
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT week_id, was_proposed FROM weekly_recipes WHERE id = ?",
+                (weekly_recipe_id,),
+            ).fetchone()
+            if row is None:
+                raise ServiceError("Meal not found.", 404)
+            if not row["was_proposed"]:
+                raise ServiceError("Only suggested meals can be rated.", 409)
+            connection.execute(
+                "UPDATE weekly_recipes SET suggestion_vote = ? WHERE id = ?",
+                (vote, weekly_recipe_id),
             )
             return self._week_payload(connection, row["week_id"])
 
@@ -604,6 +644,125 @@ class MealService:
                 (request_id,),
             )
         return result | {"requests_remaining": remaining}
+
+    def _queue_recipe_enrichment(self, recipe_ids: list[int]) -> None:
+        if self.recipe_parser is None or not recipe_ids:
+            return
+        with self._enrichment_lock:
+            queued = [
+                recipe_id
+                for recipe_id in recipe_ids
+                if recipe_id not in self._enrichment_pending
+            ]
+            self._enrichment_pending.update(queued)
+            if queued and (
+                self._enrichment_worker is None
+                or not self._enrichment_worker.is_alive()
+            ):
+                self._enrichment_worker = threading.Thread(
+                    target=self._run_enrichment_worker,
+                    name="recipe-enrichment",
+                    daemon=True,
+                )
+                self._enrichment_worker.start()
+        for recipe_id in queued:
+            self._enrichment_queue.put(recipe_id)
+
+    def _run_enrichment_worker(self) -> None:
+        while True:
+            recipe_id = self._enrichment_queue.get()
+            try:
+                self.enrich_recipe_ingredients(recipe_id)
+            except ServiceError as exc:
+                LOGGER.warning(
+                    "Automatic ingredient enrichment failed for recipe %s: status=%s",
+                    recipe_id,
+                    exc.status,
+                )
+            except Exception:
+                LOGGER.exception(
+                    "Unexpected automatic ingredient enrichment failure for recipe %s",
+                    recipe_id,
+                )
+            finally:
+                with self._enrichment_lock:
+                    self._enrichment_pending.discard(recipe_id)
+                self._enrichment_queue.task_done()
+
+    def enrich_recipe_ingredients(self, recipe_id: int) -> dict[str, Any]:
+        if self.recipe_parser is None:
+            return {"enriched": False, "reason": "not_configured"}
+
+        attempted_at = utc_now()
+        with self.database.transaction() as connection:
+            row = connection.execute(
+                """
+                SELECT r.id, r.name, r.archived_at,
+                       r.ingredient_enrichment_attempted_at,
+                       COUNT(ri.ingredient_id) AS ingredient_count
+                FROM recipes r
+                LEFT JOIN recipe_ingredients ri ON ri.recipe_id = r.id
+                WHERE r.id = ?
+                GROUP BY r.id
+                """,
+                (recipe_id,),
+            ).fetchone()
+            if row is None or row["archived_at"]:
+                return {"enriched": False, "reason": "not_found"}
+            if row["ingredient_count"]:
+                return {"enriched": False, "reason": "already_populated"}
+            previous_attempt = row["ingredient_enrichment_attempted_at"]
+            if previous_attempt:
+                try:
+                    previous = datetime.fromisoformat(previous_attempt)
+                except ValueError:
+                    previous = None
+                if previous and previous.tzinfo is None:
+                    previous = previous.astimezone()
+                if (
+                    previous
+                    and datetime.now().astimezone() - previous
+                    < ENRICHMENT_RETRY_COOLDOWN
+                ):
+                    return {"enriched": False, "reason": "cooldown"}
+            connection.execute(
+                """
+                UPDATE recipes
+                SET ingredient_enrichment_attempted_at = ?
+                WHERE id = ?
+                """,
+                (attempted_at, recipe_id),
+            )
+            recipe_name = row["name"]
+
+        result = self.parse_recipe_ingredients({"text": recipe_name})
+        if not result["ingredients"]:
+            return {"enriched": False, "reason": "no_matches"}
+
+        succeeded_at = utc_now()
+        with self.database.transaction() as connection:
+            ingredient_count = connection.execute(
+                "SELECT COUNT(*) FROM recipe_ingredients WHERE recipe_id = ?",
+                (recipe_id,),
+            ).fetchone()[0]
+            if ingredient_count:
+                return {"enriched": False, "reason": "already_populated"}
+            self._replace_recipe_ingredients(
+                connection, recipe_id, result["ingredients"]
+            )
+            connection.execute(
+                """
+                UPDATE recipes
+                SET ingredient_enrichment_succeeded_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (succeeded_at, succeeded_at, recipe_id),
+            )
+        return {
+            "enriched": True,
+            "ingredient_count": len(result["ingredients"]),
+            "unmatched": result["unmatched"],
+        }
 
     def _reserve_recipe_parse_request(self) -> tuple[int, int]:
         connection = self.database.connect()

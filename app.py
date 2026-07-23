@@ -83,6 +83,12 @@ def make_handler(service: MealService):
                     self._json(service.unlock_week(payload.get("week_start")))
                 elif match := re.fullmatch(r"/api/week-items/(\d+)/decision", parsed.path):
                     self._json(service.set_decision(int(match.group(1)), payload.get("state")))
+                elif match := re.fullmatch(r"/api/week-items/(\d+)/vote", parsed.path):
+                    self._json(
+                        service.set_suggestion_vote(
+                            int(match.group(1)), payload.get("vote")
+                        )
+                    )
                 else:
                     raise ServiceError("Not found.", 404)
             except (KeyError, TypeError, ValueError):

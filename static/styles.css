@@ -189,6 +189,12 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .meal-card .remove-meal:hover { color: var(--coral); background: var(--coral-soft); border-radius: 5px; }
 .meal-spacer { flex: 1; }
 
+.suggestion-vote { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin: 12px 0 2px; }
+.suggestion-vote button { display: inline-flex; min-width: 0; min-height: 30px; align-items: center; justify-content: center; gap: 5px; padding: 0 7px; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 5px; font-size: 11px; font-weight: 700; }
+.suggestion-vote button:hover { color: var(--ink); background: #f2f5f4; }
+.suggestion-vote button.selected[data-suggestion-vote="good"] { color: var(--forest); background: var(--mint); border-color: #8fb5a9; }
+.suggestion-vote button.selected[data-suggestion-vote="bad"] { color: #943c2b; background: var(--coral-soft); border-color: #dfa091; }
+
 .decision-control { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 16px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 .decision-control button { min-width: 0; min-height: 36px; padding: 0 6px; color: #52605c; background: #fff; border: 0; border-right: 1px solid var(--line); font-size: 12px; font-weight: 700; }
 .decision-control button:last-child { border-right: 0; }
@@ -278,6 +284,7 @@ button:disabled { cursor: not-allowed; opacity: 0.55; }
 .ingredient-editor { display: grid; gap: 8px; }
 .ingredient-row { display: grid; grid-template-columns: minmax(180px, 1fr) 132px 130px 34px; gap: 8px; align-items: center; }
 .ingredient-combobox { position: relative; min-width: 0; }
+.ingredient-combobox.invalid .row-ingredient-search { border-color: #b64b38; outline: 2px solid #f0b6aa; outline-offset: 1px; }
 .ingredient-suggestions { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; left: 0; max-height: 238px; overflow-y: auto; background: white; border: 1px solid #aebbb7; border-radius: 5px; box-shadow: 0 8px 20px rgba(24, 45, 39, 0.16); }
 .ingredient-suggestion { display: flex; min-height: 38px; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 10px; cursor: pointer; font-size: 13px; }
 .ingredient-suggestion + .ingredient-suggestion { border-top: 1px solid #edf1ef; }

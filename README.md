@@ -61,14 +61,21 @@ strict JSON-schema response, and validates every returned ID, quantity, and unit
 before returning a draft to the browser. Model output never writes directly to
 the database.
 
+When an automatically proposed recipe has no ingredients, the server queues a
+background enrichment attempt based on its recipe name. Enrichment runs
+sequentially, reuses the same catalog validation and global request limit, and
+waits 24 hours before retrying a failed or empty result. The weekly page does
+not wait for OpenAI; refreshed data includes ingredients after enrichment
+finishes.
+
 Set `OPENAI_API_KEY` in the server environment to enable parsing. The optional
 `OPENAI_RECIPE_MODEL` defaults to `gpt-4o-mini`. The application persistently
-limits parsing to 10 attempts in a rolling hour, limits pasted text to 4,000
-characters, makes one non-retried upstream call per attempt, and asks OpenAI not
-to store responses. Keep the project's monthly budget alert low and configure
-conservative API billing or prepaid-credit controls as a second line of
-protection. OpenAI project budgets are soft notification thresholds, not hard
-spending caps.
+limits parsing and automatic recipe enrichment to 100 total attempts in a
+rolling hour, limits pasted text to 4,000 characters, makes one non-retried
+upstream call per attempt, and asks OpenAI not to store responses. Keep the
+project's monthly budget alert low and configure conservative API billing or
+prepaid-credit controls as a second line of protection. OpenAI project budgets
+are soft notification thresholds, not hard spending caps.
 
 ## Ingredient Warm Start
 
@@ -93,6 +100,24 @@ python3 scripts/import_ingredient_candidates.py \
   --database data/meal_helper.sqlite3 \
   --apply
 ```
+
+Reviewed ingredient mappings for existing recipes can be applied with a private
+JSON file. Matching is case-insensitive, populated recipes are never
+overwritten, and omitting `--apply` performs a dry run:
+
+```bash
+python3 scripts/apply_recipe_backfills.py \
+  data/recipe_backfills.private.json \
+  --database data/meal_helper.sqlite3
+
+python3 scripts/apply_recipe_backfills.py \
+  data/recipe_backfills.private.json \
+  --database data/meal_helper.sqlite3 \
+  --apply
+```
+
+Files matching `data/recipe_backfills*.json` are excluded from Git because they
+may contain household recipe history and research notes.
 
 ## Production operations
 

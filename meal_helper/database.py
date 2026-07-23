@@ -28,6 +28,8 @@ CREATE TABLE IF NOT EXISTS recipes (
     url TEXT,
     instructions TEXT,
     archived_at TEXT,
+    ingredient_enrichment_attempted_at TEXT,
+    ingredient_enrichment_succeeded_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -52,6 +54,7 @@ CREATE TABLE IF NOT EXISTS weekly_recipes (
     recipe_id INTEGER NOT NULL REFERENCES recipes(id) ON DELETE RESTRICT,
     state TEXT NOT NULL DEFAULT 'pending'
         CHECK (state IN ('pending', 'accepted', 'rejected', 'postponed')),
+    suggestion_vote TEXT CHECK (suggestion_vote IN ('good', 'bad')),
     was_proposed INTEGER NOT NULL DEFAULT 1 CHECK (was_proposed IN (0, 1)),
     eaten_on TEXT,
     position INTEGER NOT NULL DEFAULT 0,
@@ -113,6 +116,14 @@ class Database:
                 connection.execute("ALTER TABLE recipes ADD COLUMN instructions TEXT")
             if "archived_at" not in columns:
                 connection.execute("ALTER TABLE recipes ADD COLUMN archived_at TEXT")
+            if "ingredient_enrichment_attempted_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE recipes ADD COLUMN ingredient_enrichment_attempted_at TEXT"
+                )
+            if "ingredient_enrichment_succeeded_at" not in columns:
+                connection.execute(
+                    "ALTER TABLE recipes ADD COLUMN ingredient_enrichment_succeeded_at TEXT"
+                )
             ingredient_columns = {
                 row["name"] for row in connection.execute("PRAGMA table_info(ingredients)")
             }
@@ -120,6 +131,18 @@ class Database:
                 connection.execute("ALTER TABLE ingredients ADD COLUMN updated_at TEXT")
                 connection.execute(
                     "UPDATE ingredients SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+                )
+            weekly_recipe_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(weekly_recipes)")
+            }
+            if "suggestion_vote" not in weekly_recipe_columns:
+                connection.execute(
+                    """
+                    ALTER TABLE weekly_recipes
+                    ADD COLUMN suggestion_vote TEXT
+                    CHECK (suggestion_vote IN ('good', 'bad'))
+                    """
                 )
 
     def import_history(self, meals: list[HistoricalMeal]) -> tuple[int, int]:

@@ -167,9 +167,28 @@ function mealCard(item) {
       <h3>${h(item.name)}</h3>
       <p class="meal-card-meta">${h(historyText)}</p>
       <div class="meal-card-links">${item.instructions ? `<button class="text-button" data-show-instructions="${item.id}">Instructions</button>` : ""}</div>
+      ${item.was_proposed ? suggestionVoteControl(item) : ""}
       <div class="meal-spacer"></div>
       ${locked ? `<span class="category-tag">${item.state === "accepted" ? "On the menu" : h(item.state)}</span>` : decisionControl(item)}
     </article>`;
+}
+
+function suggestionVoteControl(item) {
+  return `
+    <div class="suggestion-vote" aria-label="Rate this suggestion">
+      <button type="button" data-suggestion-vote="good"
+        data-weekly-recipe-id="${item.weekly_recipe_id}"
+        class="${item.suggestion_vote === "good" ? "selected" : ""}"
+        aria-pressed="${item.suggestion_vote === "good"}" title="Good suggestion">
+        <span aria-hidden="true">&#10003;</span><span>Good suggestion</span>
+      </button>
+      <button type="button" data-suggestion-vote="bad"
+        data-weekly-recipe-id="${item.weekly_recipe_id}"
+        class="${item.suggestion_vote === "bad" ? "selected" : ""}"
+        aria-pressed="${item.suggestion_vote === "bad"}" title="Bad suggestion">
+        <span aria-hidden="true">&#10005;</span><span>Bad suggestion</span>
+      </button>
+    </div>`;
 }
 
 function decisionControl(item) {
@@ -208,6 +227,22 @@ async function setDecision(itemId, nextState) {
     state.week = await api(`/api/week-items/${itemId}/decision`, {
       method: "POST",
       body: JSON.stringify({ state: stateValue }),
+    });
+    renderWeek();
+  } catch (error) {
+    notify(error.message, true);
+  }
+}
+
+async function setSuggestionVote(itemId, vote) {
+  try {
+    const current = state.week.items.find(
+      (item) => item.weekly_recipe_id === Number(itemId)
+    );
+    const nextVote = current?.suggestion_vote === vote ? null : vote;
+    state.week = await api(`/api/week-items/${itemId}/vote`, {
+      method: "POST",
+      body: JSON.stringify({ vote: nextVote }),
     });
     renderWeek();
   } catch (error) {
@@ -612,6 +647,28 @@ function closeIngredientSuggestions(combobox) {
   input.removeAttribute("aria-activedescendant");
 }
 
+function setIngredientSelection(combobox, ingredient) {
+  const input = combobox.querySelector(".row-ingredient-search");
+  input.value = ingredient.name;
+  input.removeAttribute("aria-invalid");
+  combobox.classList.remove("invalid");
+  combobox.querySelector(".row-ingredient-id").value = String(ingredient.id);
+  combobox.closest(".ingredient-row").querySelector(".row-unit").value = ingredient.default_unit;
+  combobox.dataset.selectedId = String(ingredient.id);
+  closeIngredientSuggestions(combobox);
+}
+
+function resolveExactIngredient(input) {
+  const normalized = input.value.trim().toLocaleLowerCase();
+  if (!normalized) return true;
+  const ingredient = state.ingredients.find(
+    (item) => item.name.trim().toLocaleLowerCase() === normalized
+  );
+  if (!ingredient) return false;
+  setIngredientSelection(input.closest(".ingredient-combobox"), ingredient);
+  return true;
+}
+
 function setActiveIngredientSuggestion(combobox, index) {
   const options = [...combobox.querySelectorAll(".ingredient-suggestion")];
   if (!options.length) return;
@@ -667,11 +724,7 @@ function chooseIngredientSuggestion(option) {
     (item) => item.id === Number(option.dataset.ingredientId)
   );
   if (!ingredient) return;
-  combobox.querySelector(".row-ingredient-search").value = ingredient.name;
-  combobox.querySelector(".row-ingredient-id").value = String(ingredient.id);
-  combobox.closest(".ingredient-row").querySelector(".row-unit").value = ingredient.default_unit;
-  combobox.dataset.selectedId = String(ingredient.id);
-  closeIngredientSuggestions(combobox);
+  setIngredientSelection(combobox, ingredient);
 }
 
 function adjustQuantity(button) {
@@ -694,12 +747,20 @@ function captureIngredientRows() {
 
 async function saveRecipe(event) {
   event.preventDefault();
-  const unresolved = [...document.querySelectorAll(".ingredient-row")].find((row) =>
-    row.querySelector(".row-ingredient-search").value.trim()
-    && !row.querySelector(".row-ingredient-id").value
-  );
+  const unresolved = [...document.querySelectorAll(".ingredient-row")].find((row) => {
+    const input = row.querySelector(".row-ingredient-search");
+    const selectedId = row.querySelector(".row-ingredient-id").value;
+    return input.value.trim() && !selectedId && !resolveExactIngredient(input);
+  });
   if (unresolved) {
-    unresolved.querySelector(".row-ingredient-search").focus();
+    const input = unresolved.querySelector(".row-ingredient-search");
+    const combobox = input.closest(".ingredient-combobox");
+    input.setAttribute("aria-invalid", "true");
+    combobox.classList.add("invalid");
+    updateIngredientSuggestions(input);
+    input.setAttribute("aria-invalid", "true");
+    combobox.classList.add("invalid");
+    input.focus();
     notify("Choose an ingredient from the matching suggestions.", true);
     return;
   }
@@ -914,6 +975,15 @@ document.addEventListener("click", async (event) => {
     return setDecision(decision.dataset.itemId, decision.dataset.state);
   }
 
+  const suggestionVote = event.target.closest("[data-suggestion-vote]");
+  if (suggestionVote) {
+    event.stopPropagation();
+    return setSuggestionVote(
+      suggestionVote.dataset.weeklyRecipeId,
+      suggestionVote.dataset.suggestionVote,
+    );
+  }
+
   const remove = event.target.closest("[data-remove-item]");
   if (remove) {
     event.stopPropagation();
@@ -1054,7 +1124,11 @@ document.addEventListener("focusin", (event) => {
 });
 
 document.addEventListener("input", (event) => {
-  if (event.target.matches(".row-ingredient-search")) updateIngredientSuggestions(event.target);
+  if (event.target.matches(".row-ingredient-search")) {
+    event.target.removeAttribute("aria-invalid");
+    event.target.closest(".ingredient-combobox").classList.remove("invalid");
+    updateIngredientSuggestions(event.target);
+  }
   if (event.target.matches("#recipe-picker-search")) renderRecipePicker(event.target.value);
   if (event.target.matches("#recipe-search")) {
     state.recipeSearch = event.target.value;

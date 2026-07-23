@@ -10,6 +10,7 @@ data/*.sqlite3-*
 meals_history.xlsx
 data/ingredient_candidates*.csv
 data/ingredient_unmatched*.csv
+data/recipe_backfills*.json
 
 # Generated deployment files may contain environment-specific configuration
 deploy/*.generated.*
