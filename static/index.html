@@ -61,29 +61,48 @@
         <div class="section-heading">
           <div>
             <p class="eyebrow">Shopping</p>
-            <h3>Ingredients</h3>
+            <h3>Ingredients <span id="recipe-ingredient-count" class="ingredient-count"></span></h3>
           </div>
-          <button type="button" id="add-ingredient-row" class="button secondary">+ Add ingredient</button>
         </div>
 
-        <details class="ingredient-parser-panel">
-          <summary>Paste ingredient list</summary>
-          <div class="ingredient-parser-fields">
-            <label class="field">
-              <span>Unstructured ingredients</span>
-              <textarea id="recipe-ingredient-text" maxlength="4000" rows="5" placeholder="2 cans chickpeas&#10;1 tbsp olive oil&#10;3 cloves garlic"></textarea>
-            </label>
-            <div class="ingredient-parser-actions">
-              <span id="ingredient-parser-status" class="ingredient-parser-status" role="status" aria-live="polite"></span>
-              <button type="button" id="parse-recipe-ingredients" class="button secondary">Fill ingredients</button>
-            </div>
-          </div>
-        </details>
-        <div id="ingredient-rows" class="ingredient-editor"></div>
+        <div class="ingredient-entry-tabs" role="tablist" aria-label="Ingredient entry method">
+          <button type="button" id="ingredient-mode-single" data-ingredient-mode="single"
+            role="tab" aria-controls="ingredient-single-panel">Add one by one</button>
+          <button type="button" id="ingredient-mode-paste" data-ingredient-mode="paste"
+            role="tab" aria-controls="ingredient-paste-panel">Type in the whole list and auto-populate ingredients</button>
+        </div>
 
-        <details class="new-ingredient-panel">
-          <summary>New ingredient</summary>
-          <div class="new-ingredient-fields">
+        <section id="ingredient-single-panel" class="ingredient-mode-panel" role="tabpanel"
+          aria-labelledby="ingredient-mode-single">
+          <div class="ingredient-add-grid ingredient-entry-context">
+            <div class="field ingredient-add-name">
+              <label for="ingredient-add-search">Ingredient</label>
+              <div class="ingredient-combobox" data-selected-id="" data-active-index="-1">
+                <input id="ingredient-add-search" class="row-ingredient-search" type="text"
+                  placeholder="Type 2+ letters" autocomplete="off" spellcheck="false"
+                  role="combobox" aria-label="Ingredient" aria-autocomplete="list"
+                  aria-expanded="false" aria-controls="ingredient-suggestions-add">
+                <input class="row-ingredient-id" type="hidden">
+                <div id="ingredient-suggestions-add" class="ingredient-suggestions"
+                  role="listbox" hidden></div>
+              </div>
+            </div>
+            <label class="field">
+              <span>Quantity</span>
+              <input id="ingredient-add-quantity" class="row-quantity" type="number"
+                value="1" min="0.01" step="any" inputmode="decimal">
+            </label>
+            <label class="field">
+              <span>Unit</span>
+              <select id="ingredient-add-unit" class="row-unit"></select>
+            </label>
+            <button type="button" id="add-selected-ingredient" class="button primary">Add</button>
+          </div>
+          <div class="ingredient-mode-footer">
+            <button type="button" id="toggle-new-ingredient" class="text-button"
+              aria-controls="new-ingredient-fields" aria-expanded="false">Create new ingredient</button>
+          </div>
+          <div id="new-ingredient-fields" class="new-ingredient-fields hidden">
             <label class="field">
               <span>Name</span>
               <input id="new-ingredient-name" maxlength="100">
@@ -96,9 +115,28 @@
               <input id="new-ingredient-whole-foods" type="checkbox" checked>
               <span>Buy at Whole Foods</span>
             </label>
-            <button type="button" id="create-ingredient" class="button secondary">Create</button>
+            <button type="button" id="create-ingredient" class="button secondary">Create and add</button>
           </div>
-        </details>
+        </section>
+
+        <section id="ingredient-paste-panel" class="ingredient-mode-panel" role="tabpanel"
+          aria-labelledby="ingredient-mode-paste">
+          <div class="ingredient-parser-fields">
+            <label class="field">
+              <span>Unstructured ingredients</span>
+              <textarea id="recipe-ingredient-text" maxlength="4000" rows="5" placeholder="2 cans chickpeas&#10;1 tbsp olive oil&#10;3 cloves garlic"></textarea>
+            </label>
+            <div class="ingredient-parser-actions">
+              <span id="ingredient-parser-status" class="ingredient-parser-status" role="status" aria-live="polite"></span>
+              <button type="button" id="parse-recipe-ingredients" class="button secondary">Fill ingredients</button>
+            </div>
+          </div>
+        </section>
+
+        <div class="recipe-ingredient-list-heading">
+          <strong>In this recipe</strong>
+        </div>
+        <div id="ingredient-rows" class="ingredient-editor"></div>
 
         <div class="dialog-actions">
           <button type="button" class="button ghost dialog-close">Cancel</button>

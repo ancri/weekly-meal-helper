@@ -4,6 +4,7 @@ const state = {
   recipes: [],
   ingredients: [],
   editorIngredients: [],
+  recipeIngredientMode: "single",
   editingRecipeId: null,
   addCreatedRecipeToWeek: false,
   view: "week",
@@ -544,6 +545,50 @@ function unitOptions(selected = "pieces") {
     .join("");
 }
 
+function setRecipeIngredientMode(mode, focus = false) {
+  state.recipeIngredientMode = mode === "paste" ? "paste" : "single";
+  document.querySelectorAll("[data-ingredient-mode]").forEach((button) => {
+    const active = button.dataset.ingredientMode === state.recipeIngredientMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  document.querySelector("#ingredient-single-panel").classList.toggle(
+    "hidden", state.recipeIngredientMode !== "single"
+  );
+  document.querySelector("#ingredient-paste-panel").classList.toggle(
+    "hidden", state.recipeIngredientMode !== "paste"
+  );
+  if (focus) {
+    const target = state.recipeIngredientMode === "single"
+      ? document.querySelector("#ingredient-add-search")
+      : document.querySelector("#recipe-ingredient-text");
+    target.focus();
+  }
+}
+
+function resetIngredientEntry() {
+  const combobox = document.querySelector("#ingredient-add-search")
+    .closest(".ingredient-combobox");
+  document.querySelector("#ingredient-add-search").value = "";
+  combobox.querySelector(".row-ingredient-id").value = "";
+  combobox.dataset.selectedId = "";
+  combobox.classList.remove("invalid");
+  document.querySelector("#ingredient-add-search").removeAttribute("aria-invalid");
+  document.querySelector("#ingredient-add-quantity").value = "1";
+  document.querySelector("#ingredient-add-unit").innerHTML = unitOptions();
+  closeIngredientSuggestions(combobox);
+}
+
+function toggleNewIngredientFields() {
+  const fields = document.querySelector("#new-ingredient-fields");
+  const button = document.querySelector("#toggle-new-ingredient");
+  const opening = fields.classList.contains("hidden");
+  fields.classList.toggle("hidden", !opening);
+  button.setAttribute("aria-expanded", String(opening));
+  if (opening) document.querySelector("#new-ingredient-name").focus();
+}
+
 async function openRecipe(recipeId = null, addToWeek = false) {
   state.editingRecipeId = recipeId;
   state.addCreatedRecipeToWeek = addToWeek;
@@ -559,17 +604,23 @@ async function openRecipe(recipeId = null, addToWeek = false) {
     quantity: item.quantity,
     unit: item.unit,
   }));
+  state.recipeIngredientMode = state.editorIngredients.length ? "single" : "paste";
   document.querySelector("#recipe-dialog-title").textContent = recipeId ? "Edit recipe" : "New recipe";
   document.querySelector("#recipe-name").value = recipe.name;
   document.querySelector("#recipe-category").innerHTML = categoryOptions(recipe.category);
   document.querySelector("#recipe-url").value = recipe.url || "";
   document.querySelector("#recipe-instructions").value = recipe.instructions || "";
+  document.querySelector("#ingredient-add-unit").innerHTML = unitOptions();
   document.querySelector("#new-ingredient-unit").innerHTML = unitOptions();
   document.querySelector("#new-ingredient-name").value = "";
   document.querySelector("#new-ingredient-whole-foods").checked = true;
+  document.querySelector("#new-ingredient-fields").classList.add("hidden");
+  document.querySelector("#toggle-new-ingredient").setAttribute("aria-expanded", "false");
   document.querySelector("#recipe-ingredient-text").value = "";
   document.querySelector("#ingredient-parser-status").textContent = "";
+  resetIngredientEntry();
   renderIngredientRows();
+  setRecipeIngredientMode(state.recipeIngredientMode);
   recipeDialog.showModal();
 }
 
@@ -620,12 +671,15 @@ function ingredientCombobox(item, index) {
 
 function renderIngredientRows() {
   const target = document.querySelector("#ingredient-rows");
+  const count = state.editorIngredients.length;
+  document.querySelector("#recipe-ingredient-count").textContent =
+    `${count} item${count === 1 ? "" : "s"}`;
   if (!state.editorIngredients.length) {
-    target.innerHTML = '<div class="ingredient-empty">No ingredients added.</div>';
+    target.innerHTML = '<div class="ingredient-empty">No ingredients in this recipe yet.</div>';
     return;
   }
   target.innerHTML = state.editorIngredients.map((item, index) => `
-    <div class="ingredient-row" data-row="${index}">
+    <div class="ingredient-row ingredient-entry-context" data-row="${index}">
       ${ingredientCombobox(item, index)}
       <div class="quantity-stepper">
         <button type="button" data-adjust-quantity="-1" aria-label="Decrease quantity" title="Decrease quantity">&minus;</button>
@@ -653,7 +707,7 @@ function setIngredientSelection(combobox, ingredient) {
   input.removeAttribute("aria-invalid");
   combobox.classList.remove("invalid");
   combobox.querySelector(".row-ingredient-id").value = String(ingredient.id);
-  combobox.closest(".ingredient-row").querySelector(".row-unit").value = ingredient.default_unit;
+  combobox.closest(".ingredient-entry-context").querySelector(".row-unit").value = ingredient.default_unit;
   combobox.dataset.selectedId = String(ingredient.id);
   closeIngredientSuggestions(combobox);
 }
@@ -745,8 +799,62 @@ function captureIngredientRows() {
   }));
 }
 
+function markUnresolvedIngredient(input) {
+  const combobox = input.closest(".ingredient-combobox");
+  input.setAttribute("aria-invalid", "true");
+  combobox.classList.add("invalid");
+  updateIngredientSuggestions(input);
+  input.setAttribute("aria-invalid", "true");
+  combobox.classList.add("invalid");
+  input.focus();
+  notify("Choose an ingredient from the matching suggestions.", true);
+}
+
+function addSelectedIngredient(focus = true) {
+  const input = document.querySelector("#ingredient-add-search");
+  const combobox = input.closest(".ingredient-combobox");
+  if (!input.value.trim()) {
+    input.focus();
+    notify("Choose an ingredient to add.", true);
+    return false;
+  }
+  if (!combobox.querySelector(".row-ingredient-id").value
+      && !resolveExactIngredient(input)) {
+    markUnresolvedIngredient(input);
+    return false;
+  }
+
+  captureIngredientRows();
+  const ingredientId = Number(combobox.querySelector(".row-ingredient-id").value);
+  if (state.editorIngredients.some((item) => Number(item.id) === ingredientId)) {
+    input.focus();
+    notify("That ingredient is already in this recipe.", true);
+    return false;
+  }
+  const quantity = Number(document.querySelector("#ingredient-add-quantity").value);
+  if (!Number.isFinite(quantity) || quantity <= 0) {
+    document.querySelector("#ingredient-add-quantity").focus();
+    notify("Ingredient quantity must be greater than zero.", true);
+    return false;
+  }
+  state.editorIngredients.push({
+    id: ingredientId,
+    quantity,
+    unit: document.querySelector("#ingredient-add-unit").value,
+  });
+  renderIngredientRows();
+  resetIngredientEntry();
+  if (focus) document.querySelector("#ingredient-add-search").focus();
+  return true;
+}
+
 async function saveRecipe(event) {
   event.preventDefault();
+  if (state.recipeIngredientMode === "single"
+      && document.querySelector("#ingredient-add-search").value.trim()
+      && !addSelectedIngredient(false)) {
+    return;
+  }
   const unresolved = [...document.querySelectorAll(".ingredient-row")].find((row) => {
     const input = row.querySelector(".row-ingredient-search");
     const selectedId = row.querySelector(".row-ingredient-id").value;
@@ -754,14 +862,7 @@ async function saveRecipe(event) {
   });
   if (unresolved) {
     const input = unresolved.querySelector(".row-ingredient-search");
-    const combobox = input.closest(".ingredient-combobox");
-    input.setAttribute("aria-invalid", "true");
-    combobox.classList.add("invalid");
-    updateIngredientSuggestions(input);
-    input.setAttribute("aria-invalid", "true");
-    combobox.classList.add("invalid");
-    input.focus();
-    notify("Choose an ingredient from the matching suggestions.", true);
+    markUnresolvedIngredient(input);
     return;
   }
   captureIngredientRows();
@@ -832,6 +933,9 @@ async function createIngredient() {
     state.editorIngredients.push({ id: ingredient.id, quantity: 1, unit: ingredient.default_unit });
     renderIngredientRows();
     document.querySelector("#new-ingredient-name").value = "";
+    document.querySelector("#new-ingredient-fields").classList.add("hidden");
+    document.querySelector("#toggle-new-ingredient").setAttribute("aria-expanded", "false");
+    document.querySelector("#ingredient-add-search").focus();
     notify("Ingredient created and added.");
   } catch (error) {
     notify(error.message, true);
@@ -1004,6 +1108,11 @@ document.addEventListener("click", async (event) => {
   if (event.target.closest("#open-recipe-picker")) return openRecipePicker();
   if (event.target.closest("#new-recipe")) return openRecipe();
 
+  const ingredientMode = event.target.closest("[data-ingredient-mode]");
+  if (ingredientMode) {
+    return setRecipeIngredientMode(ingredientMode.dataset.ingredientMode, true);
+  }
+
   const edit = event.target.closest("[data-edit-recipe]");
   if (edit) return openRecipe(Number(edit.dataset.editRecipe));
 
@@ -1055,13 +1164,8 @@ document.addEventListener("click", async (event) => {
     return openRecipe(null, true);
   }
 
-  if (event.target.closest("#add-ingredient-row")) {
-    captureIngredientRows();
-    state.editorIngredients.push({ id: 0, quantity: 1, unit: "pieces" });
-    renderIngredientRows();
-    document.querySelector(".ingredient-row:last-child .row-ingredient-search")?.focus();
-    return;
-  }
+  if (event.target.closest("#add-selected-ingredient")) return addSelectedIngredient();
+  if (event.target.closest("#toggle-new-ingredient")) return toggleNewIngredientFields();
 
   const quantityAdjustment = event.target.closest("[data-adjust-quantity]");
   if (quantityAdjustment) return adjustQuantity(quantityAdjustment);
@@ -1102,6 +1206,11 @@ document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       closeIngredientSuggestions(combobox);
+      return;
+    }
+    if (event.key === "Enter" && event.target.id === "ingredient-add-search") {
+      event.preventDefault();
+      addSelectedIngredient();
       return;
     }
   }
