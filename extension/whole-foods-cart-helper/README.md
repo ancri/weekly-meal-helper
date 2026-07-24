@@ -37,6 +37,9 @@ open `chrome://extensions` and press the extension's reload button.
    in multiple units are combined into one row for the same preferred product.
 6. Review the resulting Amazon cart and check out manually.
 
+Use **Stop** in the review page to halt an active run without closing or
+checking out the Amazon cart.
+
 Preferred product mappings and the current plan stay in Chrome's local
 extension storage on that browser profile. They are not written to the Meal
 Helper server or synchronized between computers.

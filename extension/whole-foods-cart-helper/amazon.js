@@ -31,6 +31,49 @@ function isProductPage() {
   );
 }
 
+function isVisible(control) {
+  return (
+    control instanceof HTMLElement &&
+    !control.disabled &&
+    control.getAttribute("aria-disabled") !== "true" &&
+    control.getClientRects().length > 0
+  );
+}
+
+function controlLabel(control) {
+  const value = [
+    control.getAttribute("aria-label"),
+    control.getAttribute("title"),
+    control.value,
+    control.textContent,
+  ]
+    .filter(Boolean)
+    .map((candidate) => String(candidate).replace(/\s+/g, " ").trim())
+    .find(Boolean);
+  return value || "";
+}
+
+function rootsUnder(root = document) {
+  const roots = [root];
+  for (const element of root.querySelectorAll("*")) {
+    if (element.shadowRoot) roots.push(...rootsUnder(element.shadowRoot));
+  }
+  return roots;
+}
+
+function deepMatches(selectors, root = document) {
+  return rootsUnder(root).flatMap((candidateRoot) =>
+    [...candidateRoot.querySelectorAll(selectors)]
+  );
+}
+
+function isAddLabel(label) {
+  return (
+    /^add(?:\s+\d+\s+items?)?$/i.test(label) ||
+    /^add(?:\s+\d+\s+items?)?\s+to\s+(?:shopping\s+)?(?:cart|basket)\b/i.test(label)
+  );
+}
+
 function chooserOverlay(chooser) {
   document.querySelector(`#${OVERLAY_ID}`)?.remove();
   const root = document.createElement("aside");
@@ -103,19 +146,48 @@ function chooserOverlay(chooser) {
 function findAddButton() {
   const directSelectors = [
     "#add-to-cart-button",
+    "#freshAddToCartButton button",
+    "#freshAddToCartButton input",
     'input[name="submit.add-to-cart"]',
     'button[data-action="add-to-cart"]',
-    'button[aria-label*="Add to Cart" i]',
-    'button[aria-label*="Add to cart" i]',
+    '[data-testid="add-to-cart-button"]',
+    '[data-testid="addToCartButton"]',
+    '[data-test-id="add-to-cart-button"]',
+    '[data-a-selector="add-to-cart-button"]',
   ];
-  for (const selector of directSelectors) {
-    const button = document.querySelector(selector);
-    if (button && !button.disabled && button.getClientRects().length) return button;
+  for (const control of deepMatches(directSelectors.join(","))) {
+    if (isVisible(control)) return control;
   }
+
+  const purchaseScopes = deepMatches([
+    "#buybox",
+    "#desktop_buybox",
+    "#rightCol",
+    "#freshAddToCartButton",
+    '[data-feature-name="addToCart"]',
+    '[data-testid*="buy-box" i]',
+    '[data-testid*="product-purchase" i]',
+  ].join(","));
+  for (const scope of purchaseScopes) {
+    const controls = deepMatches(
+      'button, input[type="button"], input[type="submit"], [role="button"]',
+      scope
+    );
+    const match = controls.find((control) => {
+      if (!isVisible(control)) return false;
+      return isAddLabel(controlLabel(control));
+    });
+    if (match) return match;
+  }
+
+  const unambiguousMatches = deepMatches(
+    'button, input[type="button"], input[type="submit"], [role="button"]'
+  ).filter((control) => isVisible(control) && isAddLabel(controlLabel(control)));
+  if (unambiguousMatches.length === 1) return unambiguousMatches[0];
   return null;
 }
 
-async function waitForAddButton(timeoutMs = 12000) {
+async function waitForAddButton(timeoutMs = 7000) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     const button = findAddButton();
@@ -123,6 +195,24 @@ async function waitForAddButton(timeoutMs = 12000) {
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
   return null;
+}
+
+function failureMessage(item) {
+  const pageText = (document.body?.innerText || "").replace(/\s+/g, " ");
+  if (/currently unavailable|temporarily out of stock|not available for delivery/i.test(pageText)) {
+    return `${item.name} appears unavailable for the selected address or store.`;
+  }
+  if (/select (?:a|your) (?:delivery )?(?:address|location)|choose your location/i.test(pageText)) {
+    return `Amazon needs a delivery address or store before ${item.name} can be added.`;
+  }
+  const labels = [...new Set(
+    deepMatches('button, input[type="button"], input[type="submit"], [role="button"]')
+      .filter(isVisible)
+      .map(controlLabel)
+      .filter(Boolean)
+  )].slice(0, 5);
+  const details = labels.length ? ` Visible controls included: ${labels.join("; ")}.` : "";
+  return `No Add to Cart control was found for ${item.name}.${details}`;
 }
 
 async function addCurrentItem(item) {
@@ -133,27 +223,37 @@ async function addCurrentItem(item) {
       message: "Sign in to Amazon, then run the cart helper again.",
     };
   }
+  if (!isProductPage()) {
+    return {
+      ok: false,
+      code: "not_a_product_page",
+      message: `The saved link for ${item.name} did not open an Amazon product page. Choose the product again.`,
+    };
+  }
   const button = await waitForAddButton();
   if (!button) {
     return {
       ok: false,
       code: "add_button_not_found",
-      message: `No Add to Cart button was found for ${item.name}.`,
+      message: failureMessage(item),
     };
   }
   button.scrollIntoView({ block: "center" });
-  button.click();
-  await new Promise((resolve) => setTimeout(resolve, 1500));
   return {
     ok: true,
     message: `Clicked Add to Cart once; ${item.requiredText} needed. Verify the cart before checkout.`,
+    button,
   };
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "ADD_CURRENT_ITEM") return false;
   addCurrentItem(message.item)
-    .then(sendResponse)
+    .then((result) => {
+      const { button, ...response } = result;
+      if (button) button.click();
+      sendResponse(response);
+    })
     .catch((error) => {
       sendResponse({ ok: false, code: "unexpected_error", message: error.message });
     });

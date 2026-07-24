@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Meal Helper Whole Foods Cart",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Review a Meal Helper shopping list and add mapped products to the Whole Foods cart.",
   "permissions": [
     "storage"

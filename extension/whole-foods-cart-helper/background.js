@@ -220,6 +220,7 @@ async function runNextItem() {
   job.currentIndex = nextIndex;
   job.items[nextIndex].status = "opening";
   job.items[nextIndex].resultMessage = "";
+  job.items[nextIndex].attemptId = crypto.randomUUID();
   const url = validProductUrl(job.items[nextIndex].productUrl);
   if (!url) {
     job.items[nextIndex].status = "failed";
@@ -277,10 +278,31 @@ async function beginAutomation() {
       ? (item.productUrl ? "ready" : "needs_mapping")
       : "skipped",
     resultMessage: "",
+    attemptId: null,
   }));
   await saveJob(job);
   await runNextItem();
   return { ok: true, itemCount: runnable.length };
+}
+
+async function cancelAutomation() {
+  const { currentJob: job } = await storageGet(["currentJob"]);
+  if (!job) return { ok: false, error: "No cart plan is available." };
+  if (job.status !== "running") return { ok: true };
+  job.status = "review";
+  job.currentIndex = -1;
+  job.automationTabId = null;
+  job.items = job.items.map((item) => {
+    if (!["opening", "adding"].includes(item.status)) return item;
+    return {
+      ...item,
+      status: item.productUrl ? "ready" : "needs_mapping",
+      resultMessage: "Cart population was stopped before this item completed.",
+      attemptId: null,
+    };
+  });
+  await saveJob(job);
+  return { ok: true };
 }
 
 async function chooseProduct(ingredientId) {
@@ -354,11 +376,17 @@ async function handleAmazonReady(sender) {
     !job ||
     job.status !== "running" ||
     sender.tab?.id !== job.automationTabId ||
+    (sender.frameId !== undefined && sender.frameId !== 0) ||
     job.currentIndex < 0
   ) {
     return { ok: true, active: false };
   }
-  const item = job.items[job.currentIndex];
+  const itemIndex = job.currentIndex;
+  const item = job.items[itemIndex];
+  if (item.status !== "opening" || !item.attemptId) {
+    return { ok: true, active: false };
+  }
+  const attemptId = item.attemptId;
   item.status = "adding";
   await saveJob(job);
   const result = await sendTabMessage(sender.tab.id, {
@@ -372,15 +400,24 @@ async function handleAmazonReady(sender) {
     },
   });
   const latest = (await storageGet(["currentJob"])).currentJob;
-  if (!latest || latest.id !== job.id) return { ok: false };
-  const latestItem = latest.items[latest.currentIndex];
+  if (
+    !latest ||
+    latest.id !== job.id ||
+    latest.status !== "running" ||
+    latest.currentIndex !== itemIndex ||
+    latest.items[itemIndex]?.attemptId !== attemptId
+  ) {
+    return { ok: false, active: false };
+  }
+  const latestItem = latest.items[itemIndex];
   latestItem.status = result?.ok ? "added" : "failed";
+  latestItem.attemptId = null;
   latestItem.resultMessage = cleanText(
     result?.message || (result?.ok ? "Clicked Add to Cart." : "Could not add this product."),
     240
   );
   await saveJob(latest);
-  setTimeout(runNextItem, 900);
+  setTimeout(runNextItem, result?.ok ? 2500 : 300);
   return { ok: true, active: true };
 }
 
@@ -400,6 +437,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     case "BEGIN_AUTOMATION":
       respond(beginAutomation());
+      return true;
+    case "CANCEL_AUTOMATION":
+      respond(cancelAutomation());
       return true;
     case "CHOOSE_PRODUCT":
       respond(chooseProduct(message.ingredientId));

@@ -2,6 +2,7 @@ const emptyState = document.querySelector("#empty-state");
 const jobView = document.querySelector("#job-view");
 const itemTable = document.querySelector("#cart-items");
 const startButton = document.querySelector("#start-cart");
+const stopButton = document.querySelector("#stop-cart");
 const statusTarget = document.querySelector("#job-status");
 
 function storageGet(keys) {
@@ -162,6 +163,7 @@ async function render() {
   document.querySelector("#job-summary").textContent =
     `${included} included, ${mapped} mapped to preferred products`;
   startButton.disabled = running || mapped === 0;
+  stopButton.classList.toggle("hidden", !running);
   startButton.textContent = running
     ? "Populating..."
     : (job.status === "complete" ? "Run again" : `Populate ${mapped} mapped item${mapped === 1 ? "" : "s"}`);
@@ -183,6 +185,16 @@ startButton.addEventListener("click", async () => {
   if (!response.ok) {
     startButton.disabled = false;
     statusTarget.textContent = response.error || "The cart helper could not start.";
+  }
+});
+
+stopButton.addEventListener("click", async () => {
+  stopButton.disabled = true;
+  statusTarget.textContent = "Stopping cart population...";
+  const response = await runtimeMessage({ type: "CANCEL_AUTOMATION" });
+  stopButton.disabled = false;
+  if (!response.ok) {
+    statusTarget.textContent = response.error || "The cart helper could not stop.";
   }
 });
 
