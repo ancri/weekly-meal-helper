@@ -42,7 +42,11 @@ sudo systemctl enable --now meal-helper
 sudo systemctl status meal-helper
 ```
 
-Email notices and Whole Foods cart automation are intentionally not part of this first local milestone; the finalized shopping-list data is ready for those integrations.
+Email notices are not part of the current application. An optional Chrome
+extension can transfer a locked Whole Foods shopping list into a locally stored
+product review plan and add mapped products to the Amazon Whole Foods cart. See
+[`extension/whole-foods-cart-helper`](extension/whole-foods-cart-helper) for
+installation, privacy, and current limitations.
 
 ## Suggestion Safety
 

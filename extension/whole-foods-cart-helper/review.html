@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whole Foods cart plan</title>
+  <link rel="stylesheet" href="review.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand-mark">M</div>
+    <div>
+      <p>Meal Helper</p>
+      <h1>Whole Foods cart plan</h1>
+    </div>
+    <a href="https://www.amazon.com/wholefoods" target="_blank" rel="noopener">Open Whole Foods</a>
+  </header>
+  <main>
+    <section id="empty-state" class="empty-state hidden">
+      <h2>No cart plan yet</h2>
+      <p>Lock a week in Meal Helper, then choose Populate Whole Foods cart.</p>
+    </section>
+    <section id="job-view" class="hidden">
+      <div class="summary">
+        <div>
+          <p class="eyebrow">Weekly shopping</p>
+          <h2 id="job-heading">Review products</h2>
+          <p id="job-summary"></p>
+        </div>
+        <button type="button" id="start-cart" class="primary">Populate cart</button>
+      </div>
+      <div class="notice">
+        The helper clicks Add to Cart once for each mapped product. Review package
+        quantities, substitutions, and checkout in Amazon.
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th class="include-column"><span class="visually-hidden">Include</span></th>
+              <th>Ingredient</th>
+              <th>Needed</th>
+              <th>Preferred product</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="cart-items"></tbody>
+        </table>
+      </div>
+      <div id="job-status" class="job-status" role="status" aria-live="polite"></div>
+    </section>
+  </main>
+  <script src="review.js"></script>
+</body>
+</html>

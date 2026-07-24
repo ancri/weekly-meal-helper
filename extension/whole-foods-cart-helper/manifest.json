@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Meal Helper Whole Foods Cart",
+  "version": "0.1.0",
+  "description": "Review a Meal Helper shopping list and add mapped products to the Whole Foods cart.",
+  "permissions": [
+    "storage"
+  ],
+  "host_permissions": [
+    "https://meals.andreicristea.com/*",
+    "https://www.amazon.com/*",
+    "https://www.wholefoodsmarket.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "128": "icon-128.png"
+  },
+  "action": {
+    "default_title": "Meal Helper cart",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "128": "icon-128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://meals.andreicristea.com/*"
+      ],
+      "js": [
+        "portal.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.amazon.com/*",
+        "https://www.wholefoodsmarket.com/*"
+      ],
+      "js": [
+        "amazon.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

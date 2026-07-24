@@ -16,7 +16,15 @@ const state = {
   ingredientSortKey: "name",
   ingredientSortDirection: "asc",
   editingIngredientId: null,
+  cartExtensionAvailable: false,
+  cartExtensionVersion: "",
+  cartTransferStatus: "",
 };
+
+const CART_EXTENSION_PAGE_SOURCE = "meal-helper-page";
+const CART_EXTENSION_SOURCE = "meal-helper-cart-extension";
+const CART_HELPER_SETUP_URL =
+  "https://github.com/ancri/weekly-meal-helper/tree/main/extension/whole-foods-cart-helper";
 
 const weekView = document.querySelector("#week-view");
 const recipesView = document.querySelector("#recipes-view");
@@ -202,12 +210,29 @@ function decisionControl(item) {
 }
 
 function shoppingSection(shopping) {
+  const wholeFoodsItems = shopping.whole_foods || [];
+  const cartAction = wholeFoodsItems.length
+    ? state.cartExtensionAvailable
+      ? '<button type="button" class="button primary" id="populate-whole-foods-cart">Populate Whole Foods cart</button>'
+      : `<a class="button secondary cart-helper-link" href="${CART_HELPER_SETUP_URL}" target="_blank" rel="noopener">Set up cart helper</a>`
+    : "";
+  const helperStatus = state.cartTransferStatus
+    ? `<p class="cart-helper-status" role="status">${h(state.cartTransferStatus)}</p>`
+    : state.cartExtensionAvailable
+      ? `<p class="cart-helper-status">Cart helper ${h(state.cartExtensionVersion)} is ready.</p>`
+      : '<p class="cart-helper-status">The optional Chrome helper can add mapped products for review before checkout.</p>';
   return `
     <section class="shopping-section">
-      <p class="eyebrow">Combined quantities</p>
-      <h2>Shopping list</h2>
+      <div class="shopping-section-heading">
+        <div>
+          <p class="eyebrow">Combined quantities</p>
+          <h2>Shopping list</h2>
+          ${helperStatus}
+        </div>
+        ${cartAction}
+      </div>
       <div class="shopping-columns">
-        ${shoppingColumn("Whole Foods", shopping.whole_foods)}
+        ${shoppingColumn("Whole Foods", wholeFoodsItems)}
         ${shoppingColumn("Elsewhere", shopping.elsewhere)}
       </div>
     </section>`;
@@ -234,6 +259,64 @@ async function setDecision(itemId, nextState) {
     notify(error.message, true);
   }
 }
+
+function pingCartExtension() {
+  window.postMessage(
+    { source: CART_EXTENSION_PAGE_SOURCE, type: "PING_CART_EXTENSION" },
+    window.location.origin,
+  );
+}
+
+function populateWholeFoodsCart() {
+  const items = state.week?.shopping?.whole_foods || [];
+  if (!state.week?.locked || !items.length) {
+    notify("Lock a week with Whole Foods ingredients first.", true);
+    return;
+  }
+  state.cartTransferStatus = "Opening the cart review...";
+  renderWeek();
+  window.postMessage(
+    {
+      source: CART_EXTENSION_PAGE_SOURCE,
+      type: "POPULATE_WHOLE_FOODS_CART",
+      weekStart: state.week.week_start,
+      items: items.map((item) => ({
+        id: item.id,
+        name: item.name,
+        quantity: item.quantity,
+        unit: item.unit,
+      })),
+    },
+    window.location.origin,
+  );
+}
+
+window.addEventListener("message", (event) => {
+  if (
+    event.source !== window ||
+    event.origin !== window.location.origin ||
+    event.data?.source !== CART_EXTENSION_SOURCE
+  ) {
+    return;
+  }
+  if (event.data.type === "CART_EXTENSION_READY") {
+    const firstDetection = !state.cartExtensionAvailable;
+    state.cartExtensionAvailable = true;
+    state.cartExtensionVersion = String(event.data.version || "");
+    if (firstDetection && state.week?.locked) renderWeek();
+    return;
+  }
+  if (event.data.type === "CART_EXTENSION_JOB_STARTED") {
+    state.cartTransferStatus = `Opened a cart plan with ${Number(event.data.itemCount) || 0} ingredients.`;
+    if (state.week?.locked) renderWeek();
+    return;
+  }
+  if (event.data.type === "CART_EXTENSION_ERROR") {
+    state.cartTransferStatus = "";
+    notify(event.data.error || "The cart helper could not start.", true);
+    if (state.week?.locked) renderWeek();
+  }
+});
 
 async function setSuggestionVote(itemId, vote) {
   try {
@@ -1105,6 +1188,7 @@ document.addEventListener("click", async (event) => {
 
   if (event.target.closest("#lock-week")) return lockWeek();
   if (event.target.closest("#unlock-week")) return unlockWeek();
+  if (event.target.closest("#populate-whole-foods-cart")) return populateWholeFoodsCart();
   if (event.target.closest("#open-recipe-picker")) return openRecipePicker();
   if (event.target.closest("#new-recipe")) return openRecipe();
 
@@ -1275,6 +1359,8 @@ async function initialize() {
   try {
     [state.meta, state.ingredients] = await Promise.all([api("/api/meta"), api("/api/ingredients")]);
     await loadWeek();
+    pingCartExtension();
+    setTimeout(pingCartExtension, 500);
   } catch (error) {
     weekView.innerHTML = `<div class="loading">${h(error.message)}</div>`;
     notify(error.message, true);

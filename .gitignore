@@ -14,3 +14,6 @@ data/recipe_backfills*.json
 
 # Generated deployment files may contain environment-specific configuration
 deploy/*.generated.*
+
+# Generated browser-extension packages
+dist/
