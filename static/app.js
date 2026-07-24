@@ -945,14 +945,14 @@ function switchView(view) {
   }
 }
 
-document.addEventListener("click", async (event) => {
+document.addEventListener("pointerdown", (event) => {
   const ingredientSuggestion = event.target.closest(".ingredient-suggestion");
-  if (ingredientSuggestion) {
-    event.preventDefault();
-    chooseIngredientSuggestion(ingredientSuggestion);
-    return;
-  }
+  if (!ingredientSuggestion) return;
+  event.preventDefault();
+  chooseIngredientSuggestion(ingredientSuggestion);
+});
 
+document.addEventListener("click", async (event) => {
   document.querySelectorAll(".ingredient-combobox").forEach((combobox) => {
     if (!combobox.contains(event.target)) closeIngredientSuggestions(combobox);
   });
