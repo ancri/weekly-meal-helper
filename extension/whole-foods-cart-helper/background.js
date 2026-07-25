@@ -235,7 +235,6 @@ async function runNextItem() {
       const tab = await createTab({ url: "about:blank", active: true });
       tabId = tab.id;
       job.automationTabId = tabId;
-      await saveJob(job);
     } catch (error) {
       job.items[nextIndex].status = "failed";
       job.items[nextIndex].resultMessage = `Could not open an Amazon tab: ${error.message}`;
@@ -244,6 +243,7 @@ async function runNextItem() {
     }
   }
 
+  await saveJob(job);
   try {
     await updateTab(tabId, { url, active: true });
   } catch {
