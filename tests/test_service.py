@@ -130,6 +130,17 @@ class ServiceTests(unittest.TestCase):
         whole_foods = self.service.create_ingredient(
             {"name": "Broccoli", "default_unit": "lbs", "whole_foods": True}
         )
+        mapped = self.service.update_ingredient_product(
+            whole_foods["id"],
+            {
+                "url": "https://www.amazon.com/dp/B000000001#details",
+                "title": "Preferred broccoli",
+            },
+        )
+        self.assertEqual(
+            mapped["preferred_product_url"],
+            "https://www.amazon.com/dp/B000000001",
+        )
         elsewhere = self.service.create_ingredient(
             {"name": "Chicken from butcher", "default_unit": "lbs", "whole_foods": False}
         )
@@ -151,7 +162,47 @@ class ServiceTests(unittest.TestCase):
             week = self.service.set_decision(item["weekly_recipe_id"], "accepted")
 
         self.assertEqual(week["shopping"]["whole_foods"][0]["quantity"], 3)
+        self.assertEqual(
+            week["shopping"]["whole_foods"][0]["preferred_product_url"],
+            "https://www.amazon.com/dp/B000000001",
+        )
+        self.assertEqual(
+            week["shopping"]["whole_foods"][0]["preferred_product_title"],
+            "Preferred broccoli",
+        )
         self.assertEqual(week["shopping"]["elsewhere"][0]["quantity"], 2)
+
+    def test_preferred_product_rejects_unknown_hosts_and_can_be_cleared(self):
+        ingredient = self.service.create_ingredient(
+            {"name": "Carrots", "default_unit": "lbs", "whole_foods": True}
+        )
+        with self.assertRaises(ServiceError):
+            self.service.update_ingredient_product(
+                ingredient["id"],
+                {"url": "https://example.com/product", "title": "Not Amazon"},
+            )
+
+        self.service.update_ingredient_product(
+            ingredient["id"],
+            {"url": "https://www.amazon.com/dp/B000000002", "title": "Carrots"},
+        )
+        renamed = self.service.update_ingredient(
+            ingredient["id"],
+            {
+                "name": "Baby carrots",
+                "default_unit": "lbs",
+                "whole_foods": True,
+            },
+        )
+        self.assertEqual(
+            renamed["preferred_product_url"],
+            "https://www.amazon.com/dp/B000000002",
+        )
+        cleared = self.service.update_ingredient_product(
+            ingredient["id"], {"url": "", "title": ""}
+        )
+        self.assertIsNone(cleared["preferred_product_url"])
+        self.assertIsNone(cleared["preferred_product_title"])
 
     def test_delete_recipe_function_is_available_for_unused_recipes(self):
         recipe = self.service.create_recipe(
@@ -488,7 +539,11 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             with database.transaction() as connection:
                 ingredient = connection.execute(
-                    "SELECT name, updated_at FROM ingredients"
+                    """
+                    SELECT name, updated_at,
+                           preferred_product_url, preferred_product_title
+                    FROM ingredients
+                    """
                 ).fetchone()
                 suggestion_columns = {
                     row["name"] for row in connection.execute("PRAGMA table_info(suggestions)")
@@ -499,6 +554,8 @@ class DatabaseMigrationTests(unittest.TestCase):
                 }
             self.assertEqual(ingredient["name"], "Existing ingredient")
             self.assertIsNotNone(ingredient["updated_at"])
+            self.assertIsNone(ingredient["preferred_product_url"])
+            self.assertIsNone(ingredient["preferred_product_title"])
             self.assertIn("addressed", suggestion_columns)
             self.assertIn("succeeded", parse_request_columns)
 

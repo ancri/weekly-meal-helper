@@ -11,6 +11,7 @@ import threading
 import unicodedata
 from datetime import date, datetime, timedelta
 from typing import Any
+from urllib.parse import urlparse
 
 from .config import (
     ALLOWED_UNITS,
@@ -28,6 +29,12 @@ from .workbook import monday_for
 
 LOGGER = logging.getLogger(__name__)
 ENRICHMENT_RETRY_COOLDOWN = timedelta(hours=24)
+PRODUCT_HOSTS = {
+    "amazon.com",
+    "www.amazon.com",
+    "wholefoodsmarket.com",
+    "www.wholefoodsmarket.com",
+}
 
 
 class ServiceError(Exception):
@@ -52,6 +59,29 @@ def _parse_week_start(value: str | None) -> date:
     else:
         parsed = date.today()
     return monday_for(parsed)
+
+
+def _preferred_product(value: Any, title_value: Any) -> tuple[str | None, str | None]:
+    if value is None or value == "":
+        return None, None
+    if not isinstance(value, str):
+        raise ServiceError("Preferred product URL must be text.")
+    url = value.strip()
+    if len(url) > 2048:
+        raise ServiceError("Preferred product URL is too long.")
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or (parsed.hostname or "").casefold() not in PRODUCT_HOSTS:
+        raise ServiceError("Choose an Amazon or Whole Foods product URL.")
+    url = parsed._replace(fragment="").geturl()
+
+    if title_value is None:
+        return url, None
+    if not isinstance(title_value, str):
+        raise ServiceError("Preferred product title must be text.")
+    title = " ".join(title_value.split())
+    if len(title) > 200:
+        raise ServiceError("Preferred product title must be 200 characters or fewer.")
+    return url, title or None
 
 
 class MealService:
@@ -220,7 +250,9 @@ class MealService:
     ) -> dict[str, list[dict[str, Any]]]:
         rows = connection.execute(
             """
-            SELECT i.id, i.name, i.whole_foods, ri.unit, SUM(ri.quantity) AS quantity
+            SELECT i.id, i.name, i.whole_foods,
+                   i.preferred_product_url, i.preferred_product_title,
+                   ri.unit, SUM(ri.quantity) AS quantity
             FROM weekly_recipes wr
             JOIN recipe_ingredients ri ON ri.recipe_id = wr.recipe_id
             JOIN ingredients i ON i.id = ri.ingredient_id
@@ -530,14 +562,28 @@ class MealService:
         if unit not in ALLOWED_UNITS:
             raise ServiceError("Choose a valid default unit.")
         whole_foods = 1 if payload.get("whole_foods", True) else 0
+        product_url, product_title = _preferred_product(
+            payload.get("preferred_product_url"),
+            payload.get("preferred_product_title"),
+        )
         with self.database.transaction() as connection:
             try:
                 cursor = connection.execute(
                     """
-                    INSERT INTO ingredients(name, whole_foods, default_unit, updated_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO ingredients(
+                        name, whole_foods, default_unit,
+                        preferred_product_url, preferred_product_title, updated_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (name, whole_foods, unit, utc_now()),
+                    (
+                        name,
+                        whole_foods,
+                        unit,
+                        product_url,
+                        product_title,
+                        utc_now(),
+                    ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ServiceError("An ingredient with that name already exists.") from exc
@@ -554,21 +600,71 @@ class MealService:
             raise ServiceError("Choose a valid default unit.")
         whole_foods = 1 if payload.get("whole_foods", True) else 0
         with self.database.transaction() as connection:
-            if connection.execute(
-                "SELECT id FROM ingredients WHERE id = ?", (ingredient_id,)
-            ).fetchone() is None:
+            existing = connection.execute(
+                "SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)
+            ).fetchone()
+            if existing is None:
                 raise ServiceError("Ingredient not found.", 404)
+            if (
+                "preferred_product_url" in payload
+                or "preferred_product_title" in payload
+            ):
+                product_url, product_title = _preferred_product(
+                    payload.get("preferred_product_url"),
+                    payload.get("preferred_product_title"),
+                )
+            else:
+                product_url = existing["preferred_product_url"]
+                product_title = existing["preferred_product_title"]
             try:
                 connection.execute(
                     """
                     UPDATE ingredients
-                    SET name = ?, default_unit = ?, whole_foods = ?, updated_at = ?
+                    SET name = ?,
+                        default_unit = ?,
+                        whole_foods = ?,
+                        preferred_product_url = ?,
+                        preferred_product_title = ?,
+                        updated_at = ?
                     WHERE id = ?
                     """,
-                    (name, unit, whole_foods, utc_now(), ingredient_id),
+                    (
+                        name,
+                        unit,
+                        whole_foods,
+                        product_url,
+                        product_title,
+                        utc_now(),
+                        ingredient_id,
+                    ),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ServiceError("An ingredient with that name already exists.") from exc
+            return dict(
+                connection.execute(
+                    "SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)
+                ).fetchone()
+            )
+
+    def update_ingredient_product(
+        self, ingredient_id: int, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        url, title = _preferred_product(payload.get("url"), payload.get("title"))
+        with self.database.transaction() as connection:
+            if connection.execute(
+                "SELECT id FROM ingredients WHERE id = ?", (ingredient_id,)
+            ).fetchone() is None:
+                raise ServiceError("Ingredient not found.", 404)
+            connection.execute(
+                """
+                UPDATE ingredients
+                SET preferred_product_url = ?,
+                    preferred_product_title = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (url, title, utc_now(), ingredient_id),
+            )
             return dict(
                 connection.execute(
                     "SELECT * FROM ingredients WHERE id = ?", (ingredient_id,)

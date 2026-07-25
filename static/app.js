@@ -285,6 +285,8 @@ function populateWholeFoodsCart() {
         name: item.name,
         quantity: item.quantity,
         unit: item.unit,
+        productUrl: item.preferred_product_url || "",
+        productTitle: item.preferred_product_title || "",
       })),
     },
     window.location.origin,
@@ -500,6 +502,9 @@ function visibleIngredients() {
     let comparison;
     if (state.ingredientSortKey === "whole_foods") {
       comparison = Number(second.whole_foods) - Number(first.whole_foods);
+    } else if (state.ingredientSortKey === "preferred_product_url") {
+      comparison = Number(Boolean(second.preferred_product_url))
+        - Number(Boolean(first.preferred_product_url));
     } else if (state.ingredientSortKey === "usage_count") {
       comparison = Number(first.usage_count) - Number(second.usage_count);
     } else if (state.ingredientSortKey === "default_unit") {
@@ -538,6 +543,7 @@ function renderIngredients() {
           ${ingredientSortHeader("name", "Ingredient")}
           ${ingredientSortHeader("whole_foods", "Source")}
           ${ingredientSortHeader("default_unit", "Default unit")}
+          ${ingredientSortHeader("preferred_product_url", "Product")}
           ${ingredientSortHeader("usage_count", "Recipes")}
           <th><span class="visually-hidden">Actions</span></th>
         </tr></thead>
@@ -556,6 +562,9 @@ function renderIngredientTableRows() {
       <td><strong>${highlightedIngredientName(ingredient.name)}</strong></td>
       <td><span class="ingredient-source">${ingredient.whole_foods ? "Whole Foods" : "Elsewhere"}</span></td>
       <td>${h(ingredient.default_unit)}</td>
+      <td>${ingredient.preferred_product_url
+        ? `<a class="ingredient-product-link" href="${h(ingredient.preferred_product_url)}" target="_blank" rel="noopener">Mapped</a>`
+        : '<span class="ingredient-source">Not mapped</span>'}</td>
       <td><span class="ingredient-usage">${ingredient.usage_count} recipe${Number(ingredient.usage_count) === 1 ? "" : "s"}</span></td>
       <td>
         <div class="recipe-actions">
@@ -563,19 +572,29 @@ function renderIngredientTableRows() {
           <button class="text-button danger" data-delete-ingredient="${ingredient.id}" data-ingredient-name="${h(ingredient.name)}" ${Number(ingredient.usage_count) ? `disabled title="Used by ${ingredient.usage_count} recipe(s)"` : ""}>Delete</button>
         </div>
       </td>
-    </tr>`).join("") : '<tr><td class="recipe-empty" colspan="5">No matching ingredients.</td></tr>';
+    </tr>`).join("") : '<tr><td class="recipe-empty" colspan="6">No matching ingredients.</td></tr>';
 }
 
 function openManagedIngredient(ingredientId = null) {
   state.editingIngredientId = ingredientId;
   const ingredient = ingredientId
     ? state.ingredients.find((item) => item.id === Number(ingredientId))
-    : { name: "", default_unit: "pieces", whole_foods: true };
+    : {
+        name: "",
+        default_unit: "pieces",
+        whole_foods: true,
+        preferred_product_url: "",
+        preferred_product_title: "",
+      };
   if (!ingredient) return notify("Ingredient not found.", true);
   document.querySelector("#ingredient-dialog-title").textContent = ingredientId ? "Edit ingredient" : "New ingredient";
   document.querySelector("#managed-ingredient-name").value = ingredient.name;
   document.querySelector("#managed-ingredient-unit").innerHTML = unitOptions(ingredient.default_unit);
   document.querySelector("#managed-ingredient-whole-foods").checked = Boolean(ingredient.whole_foods);
+  document.querySelector("#managed-ingredient-product-url").value =
+    ingredient.preferred_product_url || "";
+  document.querySelector("#managed-ingredient-product-title").value =
+    ingredient.preferred_product_title || "";
   ingredientDialog.showModal();
 }
 
@@ -585,6 +604,10 @@ async function saveManagedIngredient(event) {
     name: document.querySelector("#managed-ingredient-name").value,
     default_unit: document.querySelector("#managed-ingredient-unit").value,
     whole_foods: document.querySelector("#managed-ingredient-whole-foods").checked,
+    preferred_product_url:
+      document.querySelector("#managed-ingredient-product-url").value,
+    preferred_product_title:
+      document.querySelector("#managed-ingredient-product-title").value,
   };
   try {
     await api(state.editingIngredientId ? `/api/ingredients/${state.editingIngredientId}` : "/api/ingredients", {

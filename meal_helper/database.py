@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS ingredients (
     name TEXT NOT NULL COLLATE NOCASE UNIQUE,
     whole_foods INTEGER NOT NULL DEFAULT 1 CHECK (whole_foods IN (0, 1)),
     default_unit TEXT NOT NULL DEFAULT 'pieces',
+    preferred_product_url TEXT,
+    preferred_product_title TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -131,6 +133,14 @@ class Database:
                 connection.execute("ALTER TABLE ingredients ADD COLUMN updated_at TEXT")
                 connection.execute(
                     "UPDATE ingredients SET updated_at = COALESCE(created_at, CURRENT_TIMESTAMP)"
+                )
+            if "preferred_product_url" not in ingredient_columns:
+                connection.execute(
+                    "ALTER TABLE ingredients ADD COLUMN preferred_product_url TEXT"
+                )
+            if "preferred_product_title" not in ingredient_columns:
+                connection.execute(
+                    "ALTER TABLE ingredients ADD COLUMN preferred_product_title TEXT"
                 )
             weekly_recipe_columns = {
                 row["name"]

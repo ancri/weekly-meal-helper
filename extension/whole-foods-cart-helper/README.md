@@ -40,9 +40,10 @@ open `chrome://extensions` and press the extension's reload button.
 Use **Stop** in the review page to halt an active run without closing or
 checking out the Amazon cart.
 
-Preferred product mappings and the current plan stay in Chrome's local
-extension storage on that browser profile. They are not written to the Meal
-Helper server or synchronized between computers.
+Preferred product mappings are saved to the matching ingredient in Meal
+Helper, so household browsers use the same products. The extension also keeps
+a local fallback copy together with the current cart plan. Existing
+browser-local mappings are migrated to Meal Helper when a new plan starts.
 
 ## Limitations
 

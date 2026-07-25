@@ -47,6 +47,14 @@ class ExtensionPackageTests(unittest.TestCase):
             self.assertIn(message_type, app_source)
             self.assertIn(message_type, portal_source)
 
+    def test_product_mapping_sync_protocol_matches(self):
+        background_source = (SOURCE / "background.js").read_text(encoding="utf-8")
+        portal_source = (SOURCE / "portal.js").read_text(encoding="utf-8")
+        message_type = "SAVE_PRODUCT_MAPPING_TO_PORTAL"
+        self.assertIn(message_type, background_source)
+        self.assertIn(message_type, portal_source)
+        self.assertIn("/preferred-product", portal_source)
+
 
 if __name__ == "__main__":
     unittest.main()

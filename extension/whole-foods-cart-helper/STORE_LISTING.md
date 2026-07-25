@@ -17,11 +17,12 @@ mapped products to the cart without checking out.
 
 ## Permission justification
 
-**Storage:** Saves preferred product mappings and the current cart plan in the
-local Chrome profile.
+**Storage:** Saves a fallback copy of preferred product mappings and the
+current cart plan in the local Chrome profile.
 
 **Host access to meals.andreicristea.com:** Detects a user-requested cart
-transfer and receives only the locked Whole Foods ingredient list.
+transfer, receives only the locked Whole Foods ingredient list, and saves the
+user's preferred product to the corresponding Meal Helper ingredient.
 
 **Host access to amazon.com and wholefoodsmarket.com:** Lets the user select a
 preferred product and allows a user-started cart run to locate and click the Add

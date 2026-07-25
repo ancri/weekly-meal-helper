@@ -43,8 +43,10 @@ sudo systemctl status meal-helper
 ```
 
 Email notices are not part of the current application. An optional Chrome
-extension can transfer a locked Whole Foods shopping list into a locally stored
-product review plan and add mapped products to the Amazon Whole Foods cart. See
+extension can transfer a locked Whole Foods shopping list into a product review
+plan and add mapped products to the Amazon Whole Foods cart. Preferred product
+mappings are stored with ingredients in Meal Helper's SQLite database, with
+browser storage retained only as a fallback. See
 [`extension/whole-foods-cart-helper`](extension/whole-foods-cart-helper) for
 installation, privacy, and current limitations.
 

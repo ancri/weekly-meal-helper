@@ -52,6 +52,39 @@ window.addEventListener("message", (event) => {
   }
 });
 
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type !== "SAVE_PRODUCT_MAPPING_TO_PORTAL") return false;
+  const ingredientId = Number(message.ingredientId);
+  if (!Number.isInteger(ingredientId) || ingredientId <= 0) {
+    sendResponse({ ok: false, error: "Invalid ingredient mapping." });
+    return false;
+  }
+  fetch(`${window.location.origin}/api/ingredients/${ingredientId}/preferred-product`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      url: message.productUrl,
+      title: message.productTitle,
+    }),
+  })
+    .then(async (response) => {
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        sendResponse({
+          ok: false,
+          error: payload.error || "Meal Helper could not save this product.",
+        });
+        return;
+      }
+      sendResponse({ ok: true });
+    })
+    .catch((error) => {
+      sendResponse({ ok: false, error: error.message });
+    });
+  return true;
+});
+
 postToPage("CART_EXTENSION_READY", {
   version: chrome.runtime.getManifest().version,
 });

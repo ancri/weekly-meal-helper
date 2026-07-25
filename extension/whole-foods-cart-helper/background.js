@@ -126,6 +126,12 @@ function normalizedItems(value, mappings) {
       return;
     }
     const mapping = mappings[String(id)] || {};
+    const serverProductUrl = validProductUrl(item?.productUrl);
+    const localProductUrl = validProductUrl(mapping.url);
+    const productUrl = serverProductUrl || localProductUrl;
+    const productTitle = serverProductUrl
+      ? cleanText(item?.productTitle, 200)
+      : cleanText(mapping.title, 200);
     const normalizedItem = {
       id,
       name,
@@ -133,9 +139,10 @@ function normalizedItems(value, mappings) {
       requiredUnit: unit,
       requirements: [{ quantity, unit }],
       included: true,
-      productUrl: validProductUrl(mapping.url),
-      productTitle: cleanText(mapping.title, 200),
-      status: validProductUrl(mapping.url) ? "ready" : "needs_mapping",
+      productUrl,
+      productTitle,
+      mappingSource: serverProductUrl ? "server" : (localProductUrl ? "local" : "none"),
+      status: productUrl ? "ready" : "needs_mapping",
       resultMessage: "",
     };
     normalized.push(normalizedItem);
@@ -159,6 +166,18 @@ function requiredText(item) {
     .join(" + ");
 }
 
+async function syncMappingToPortal(portalTabId, item) {
+  if (!portalTabId || !item?.productUrl) {
+    return { ok: false, error: "The Meal Helper tab is unavailable." };
+  }
+  return sendTabMessage(portalTabId, {
+    type: "SAVE_PRODUCT_MAPPING_TO_PORTAL",
+    ingredientId: item.id,
+    productUrl: item.productUrl,
+    productTitle: item.productTitle,
+  });
+}
+
 async function openReviewPage() {
   const { reviewTabId } = await storageGet(["reviewTabId"]);
   if (reviewTabId) {
@@ -173,7 +192,7 @@ async function openReviewPage() {
   return tab;
 }
 
-async function startJob(items, weekStart) {
+async function startJob(items, weekStart, portalTabId) {
   const { productMappings = {} } = await storageGet(["productMappings"]);
   const normalized = normalizedItems(items, productMappings);
   if (!normalized.length) {
@@ -186,9 +205,31 @@ async function startJob(items, weekStart) {
     status: "review",
     currentIndex: -1,
     automationTabId: null,
+    portalTabId,
     items: normalized,
   };
-  await storageSet({ currentJob: job });
+  for (const item of normalized) {
+    if (item.mappingSource === "server") {
+      productMappings[String(item.id)] = {
+        url: item.productUrl,
+        title: item.productTitle,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+  }
+  await storageSet({ currentJob: job, productMappings });
+
+  await Promise.all(
+    normalized
+      .filter((item) => item.mappingSource === "local")
+      .map(async (item) => {
+        const result = await syncMappingToPortal(portalTabId, item);
+        if (!result?.ok) {
+          item.resultMessage = "Saved in this browser; Meal Helper sync is pending.";
+        }
+      })
+  );
+  await saveJob(job);
   await openReviewPage();
   return { ok: true, itemCount: normalized.length, jobId: job.id };
 }
@@ -363,6 +404,18 @@ async function saveMapping(message, sender) {
   const updates = { productMappings, chooser: null };
   if (job) updates.currentJob = job;
   await storageSet(updates);
+  const syncResult = await syncMappingToPortal(job?.portalTabId, {
+    id: ingredientId,
+    productUrl: url,
+    productTitle: title,
+  });
+  if (job && !syncResult?.ok) {
+    const item = job.items.find((candidate) => candidate.id === ingredientId);
+    if (item) {
+      item.resultMessage = "Saved in this browser; Meal Helper sync is pending.";
+      await saveJob(job);
+    }
+  }
   await openReviewPage();
   if (sender.tab?.id) {
     setTimeout(() => removeTab(sender.tab.id).catch(() => {}), 250);
@@ -430,7 +483,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   switch (message?.type) {
     case "START_CART_JOB":
-      respond(startJob(message.items, message.weekStart));
+      respond(startJob(message.items, message.weekStart, sender.tab?.id));
       return true;
     case "OPEN_REVIEW":
       respond(openReviewPage().then(() => ({ ok: true })));

@@ -105,6 +105,12 @@ def make_handler(service: MealService):
                 payload = self._body()
                 if match := re.fullmatch(r"/api/recipes/(\d+)", parsed.path):
                     self._json(service.update_recipe(int(match.group(1)), payload))
+                elif match := re.fullmatch(
+                    r"/api/ingredients/(\d+)/preferred-product", parsed.path
+                ):
+                    self._json(
+                        service.update_ingredient_product(int(match.group(1)), payload)
+                    )
                 elif match := re.fullmatch(r"/api/ingredients/(\d+)", parsed.path):
                     self._json(service.update_ingredient(int(match.group(1)), payload))
                 else:
