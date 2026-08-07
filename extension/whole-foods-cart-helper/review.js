@@ -41,6 +41,93 @@ function formatRequirements(item) {
     .join(" + ");
 }
 
+function mergeRequirement(requirements, quantity, unit) {
+  const existing = requirements.find(
+    (requirement) => requirement.unit.toLocaleLowerCase() === unit.toLocaleLowerCase()
+  );
+  if (existing) existing.quantity += quantity;
+  else requirements.push({ quantity, unit });
+}
+
+function formatRequirementList(requirements) {
+  return requirements
+    .map((requirement) => `${formatQuantity(requirement.quantity)} ${requirement.unit}`)
+    .join(" + ");
+}
+
+function recipeGroups(items) {
+  const groups = new Map();
+  const appearances = new Map();
+
+  items.forEach((item) => {
+    const sources = Array.isArray(item.recipes) && item.recipes.length
+      ? item.recipes
+      : [{
+          id: 0,
+          name: "Other ingredients",
+          position: Number.MAX_SAFE_INTEGER,
+          requirements: Array.isArray(item.requirements) ? item.requirements : [],
+        }];
+
+    sources.forEach((source) => {
+      const recipeId = Number(source.id) || 0;
+      const key = recipeId ? `recipe:${recipeId}` : "other";
+      let group = groups.get(key);
+      if (!group) {
+        group = {
+          id: recipeId,
+          name: source.name || "Other ingredients",
+          position: Number.isInteger(Number(source.position))
+            ? Number(source.position)
+            : Number.MAX_SAFE_INTEGER,
+          items: new Map(),
+        };
+        groups.set(key, group);
+      }
+      let occurrence = group.items.get(item.id);
+      if (!occurrence) {
+        occurrence = { item, requirements: [] };
+        group.items.set(item.id, occurrence);
+        appearances.set(item.id, (appearances.get(item.id) || 0) + 1);
+      }
+      if (Array.isArray(source.requirements)) {
+        source.requirements.forEach((requirement) => {
+          mergeRequirement(
+            occurrence.requirements,
+            Number(requirement.quantity),
+            requirement.unit
+          );
+        });
+      } else {
+        mergeRequirement(
+          occurrence.requirements,
+          Number(source.quantity),
+          source.unit
+        );
+      }
+    });
+  });
+
+  const seen = new Set();
+  return [...groups.values()]
+    .sort((first, second) => first.position - second.position
+      || first.name.localeCompare(second.name))
+    .map((group) => ({
+      ...group,
+      items: [...group.items.values()]
+        .sort((first, second) => first.item.name.localeCompare(second.item.name))
+        .map((occurrence) => {
+          const duplicate = seen.has(occurrence.item.id);
+          seen.add(occurrence.item.id);
+          return {
+            ...occurrence,
+            duplicate,
+            shared: (appearances.get(occurrence.item.id) || 0) > 1,
+          };
+        }),
+    }));
+}
+
 function statusLabel(status) {
   return {
     ready: "Ready",
@@ -57,6 +144,21 @@ function cell(tag = "td") {
   return document.createElement(tag);
 }
 
+function groupRow(group) {
+  const row = document.createElement("tr");
+  row.className = "recipe-group-row";
+  const heading = cell("th");
+  heading.colSpan = 5;
+  heading.scope = "rowgroup";
+  const title = document.createElement("strong");
+  title.textContent = group.name;
+  const count = document.createElement("span");
+  count.textContent = `${group.items.length} ingredient${group.items.length === 1 ? "" : "s"}`;
+  heading.append(title, count);
+  row.append(heading);
+  return row;
+}
+
 async function setIncluded(ingredientId, included) {
   const { currentJob: job } = await storageGet(["currentJob"]);
   if (!job) return;
@@ -70,16 +172,23 @@ async function setIncluded(ingredientId, included) {
   await storageSet({ currentJob: job });
 }
 
-function itemRow(item, jobRunning) {
+function itemRow(occurrence, jobRunning) {
+  const { item, requirements, duplicate, shared } = occurrence;
   const row = document.createElement("tr");
+  row.classList.toggle("duplicate-item", duplicate);
 
   const includeCell = cell();
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
   checkbox.checked = Boolean(item.included);
-  checkbox.disabled = jobRunning;
-  checkbox.setAttribute("aria-label", `Include ${item.name}`);
-  checkbox.addEventListener("change", () => setIncluded(item.id, checkbox.checked));
+  checkbox.disabled = jobRunning || duplicate;
+  checkbox.setAttribute(
+    "aria-label",
+    duplicate ? `${item.name} is listed above` : `Include ${item.name}`
+  );
+  if (!duplicate) {
+    checkbox.addEventListener("change", () => setIncluded(item.id, checkbox.checked));
+  }
   includeCell.append(checkbox);
   row.append(includeCell);
 
@@ -88,13 +197,44 @@ function itemRow(item, jobRunning) {
   name.className = "ingredient-name";
   name.textContent = item.name;
   nameCell.append(name);
+  if (duplicate) {
+    const duplicateNote = document.createElement("span");
+    duplicateNote.className = "duplicate-note";
+    duplicateNote.textContent = "Listed above";
+    nameCell.append(duplicateNote);
+  }
   row.append(nameCell);
 
   const neededCell = cell();
-  neededCell.textContent = formatRequirements(item);
+  const recipeQuantity = document.createElement("span");
+  recipeQuantity.className = "recipe-quantity";
+  recipeQuantity.textContent = formatRequirementList(requirements);
+  neededCell.append(recipeQuantity);
+  if (shared && !duplicate) {
+    const total = document.createElement("span");
+    total.className = "total-needed";
+    total.textContent = `Total: ${formatRequirements(item)}`;
+    neededCell.append(total);
+  }
   row.append(neededCell);
 
   const productCell = cell();
+  if (duplicate) {
+    const listedAbove = document.createElement("span");
+    listedAbove.className = "listed-above";
+    listedAbove.textContent = "Use the first listing above";
+    productCell.append(listedAbove);
+    row.append(productCell);
+
+    const stateCell = cell();
+    const duplicateStatus = document.createElement("span");
+    duplicateStatus.className = "status duplicate";
+    duplicateStatus.textContent = "Listed above";
+    stateCell.append(duplicateStatus);
+    row.append(stateCell);
+    return row;
+  }
+
   const productActions = document.createElement("div");
   productActions.className = "product-actions";
   if (item.productUrl) {
@@ -168,9 +308,10 @@ async function render() {
     ? "Populating..."
     : (job.status === "complete" ? "Run again" : `Populate ${mapped} mapped item${mapped === 1 ? "" : "s"}`);
 
-  itemTable.replaceChildren(
-    ...job.items.map((item) => itemRow(item, running))
-  );
+  itemTable.replaceChildren(...recipeGroups(job.items).flatMap((group) => [
+    groupRow(group),
+    ...group.items.map((occurrence) => itemRow(occurrence, running)),
+  ]));
   statusTarget.textContent = running
     ? "Keep this tab open while the helper visits each mapped product."
     : job.status === "complete"

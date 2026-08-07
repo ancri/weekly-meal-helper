@@ -287,6 +287,13 @@ function populateWholeFoodsCart() {
         unit: item.unit,
         productUrl: item.preferred_product_url || "",
         productTitle: item.preferred_product_title || "",
+        recipes: Array.isArray(item.recipes) ? item.recipes.map((recipe) => ({
+          id: recipe.id,
+          name: recipe.name,
+          position: recipe.position,
+          quantity: recipe.quantity,
+          unit: recipe.unit,
+        })) : [],
       })),
     },
     window.location.origin,

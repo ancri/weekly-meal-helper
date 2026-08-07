@@ -170,7 +170,25 @@ class ServiceTests(unittest.TestCase):
             week["shopping"]["whole_foods"][0]["preferred_product_title"],
             "Preferred broccoli",
         )
+        self.assertEqual(
+            [source["name"] for source in week["shopping"]["whole_foods"][0]["recipes"]],
+            [item["name"] for item in accepted],
+        )
+        self.assertEqual(
+            [source["quantity"] for source in week["shopping"]["whole_foods"][0]["recipes"]],
+            [1, 1, 1],
+        )
+        self.assertTrue(
+            all(
+                source["unit"] == "lbs"
+                for source in week["shopping"]["whole_foods"][0]["recipes"]
+            )
+        )
         self.assertEqual(week["shopping"]["elsewhere"][0]["quantity"], 2)
+        self.assertEqual(
+            week["shopping"]["elsewhere"][0]["recipes"][0]["name"],
+            accepted[0]["name"],
+        )
 
     def test_preferred_product_rejects_unknown_hosts_and_can_be_cleared(self):
         ingredient = self.service.create_ingredient(

@@ -59,6 +59,16 @@ td:nth-child(3) { width: 15%; color: var(--muted); white-space: nowrap; }
 td:nth-child(4) { width: 38%; }
 td:nth-child(5) { width: 17%; }
 .ingredient-name { display: block; font-size: 14px; }
+.recipe-group-row th { padding: 12px; color: var(--ink); background: #dfe9e5; border-top: 8px solid var(--canvas); border-bottom-color: #c5d3ce; text-transform: none; }
+.recipe-group-row:first-child th { border-top: 0; }
+.recipe-group-row strong { font-size: 13px; }
+.recipe-group-row span { margin-left: 8px; color: var(--muted); font-size: 10px; font-weight: 650; text-transform: uppercase; }
+.recipe-quantity { display: block; }
+.total-needed { display: block; margin-top: 3px; color: var(--forest-2); font-size: 10px; font-weight: 700; }
+.duplicate-item { color: #84908d; background: #f5f7f6; }
+.duplicate-item .ingredient-name { color: #77827f; font-weight: 650; }
+.duplicate-note, .listed-above { display: block; margin-top: 3px; color: #8b9693; font-size: 10px; }
+.status.duplicate { color: #77827f; background: #e4e9e7; }
 .product-title { display: block; overflow: hidden; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; text-decoration: none; }
 .product-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .status { display: inline-flex; min-height: 25px; align-items: center; padding: 0 7px; border-radius: 4px; font-size: 11px; font-weight: 750; }

@@ -252,19 +252,51 @@ class MealService:
             """
             SELECT i.id, i.name, i.whole_foods,
                    i.preferred_product_url, i.preferred_product_title,
-                   ri.unit, SUM(ri.quantity) AS quantity
+                   r.id AS recipe_id, r.name AS recipe_name,
+                   wr.position AS recipe_position,
+                   ri.unit, ri.quantity
             FROM weekly_recipes wr
             JOIN recipe_ingredients ri ON ri.recipe_id = wr.recipe_id
             JOIN ingredients i ON i.id = ri.ingredient_id
+            JOIN recipes r ON r.id = wr.recipe_id
             WHERE wr.week_id = ? AND wr.state = 'accepted'
-            GROUP BY i.id, ri.unit
-            ORDER BY i.name COLLATE NOCASE
+            ORDER BY wr.position, r.name COLLATE NOCASE, i.name COLLATE NOCASE
             """,
             (week_id,),
         ).fetchall()
+        combined: dict[tuple[int, str], dict[str, Any]] = {}
+        for row in rows:
+            key = (row["id"], row["unit"])
+            item = combined.get(key)
+            if item is None:
+                item = {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "whole_foods": row["whole_foods"],
+                    "preferred_product_url": row["preferred_product_url"],
+                    "preferred_product_title": row["preferred_product_title"],
+                    "unit": row["unit"],
+                    "quantity": 0,
+                    "recipes": [],
+                }
+                combined[key] = item
+            item["quantity"] += row["quantity"]
+            item["recipes"].append(
+                {
+                    "id": row["recipe_id"],
+                    "name": row["recipe_name"],
+                    "position": row["recipe_position"],
+                    "quantity": row["quantity"],
+                    "unit": row["unit"],
+                }
+            )
+        items = sorted(
+            combined.values(),
+            key=lambda item: (item["name"].casefold(), item["unit"].casefold()),
+        )
         return {
-            "whole_foods": [dict(row) for row in rows if row["whole_foods"]],
-            "elsewhere": [dict(row) for row in rows if not row["whole_foods"]],
+            "whole_foods": [item for item in items if item["whole_foods"]],
+            "elsewhere": [item for item in items if not item["whole_foods"]],
         }
 
     def set_decision(self, weekly_recipe_id: int, state: str) -> dict[str, Any]:

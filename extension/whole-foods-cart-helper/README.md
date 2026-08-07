@@ -31,11 +31,14 @@ open `chrome://extensions` and press the extension's reload button.
    address.
 2. Lock a week in Meal Helper.
 3. Choose **Populate Whole Foods cart** above the shopping list.
-4. For every unmapped ingredient, choose **Choose product**, open the intended
+4. Review ingredients grouped under their recipes. An ingredient shared by
+   several recipes is actionable only in its first group; later appearances
+   are marked **Listed above**.
+5. For every unmapped ingredient, choose **Choose product**, open the intended
    product, and save it.
-5. Exclude any ingredients you do not want and start cart population. Requirements
+6. Exclude any ingredients you do not want and start cart population. Requirements
    in multiple units are combined into one row for the same preferred product.
-6. Review the resulting Amazon cart and check out manually.
+7. Review the resulting Amazon cart and check out manually.
 
 Use **Stop** in the review page to halt an active run without closing or
 checking out the Amazon cart.

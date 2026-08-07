@@ -55,6 +55,15 @@ class ExtensionPackageTests(unittest.TestCase):
         self.assertIn(message_type, portal_source)
         self.assertIn("/preferred-product", portal_source)
 
+    def test_review_groups_recipe_sources_and_marks_duplicates(self):
+        app_source = (ROOT / "static" / "app.js").read_text(encoding="utf-8")
+        background_source = (SOURCE / "background.js").read_text(encoding="utf-8")
+        review_source = (SOURCE / "review.js").read_text(encoding="utf-8")
+        self.assertIn("recipes: Array.isArray(item.recipes)", app_source)
+        self.assertIn("normalizedRecipeSources", background_source)
+        self.assertIn("recipeGroups(job.items)", review_source)
+        self.assertIn("Listed above", review_source)
+
 
 if __name__ == "__main__":
     unittest.main()

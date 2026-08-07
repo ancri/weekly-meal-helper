@@ -105,6 +105,43 @@ function searchUrl(name) {
   return `https://www.amazon.com/s?k=${query}&i=wholefoods`;
 }
 
+function normalizedRecipeSources(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 20).flatMap((source) => {
+    const id = Number(source?.id);
+    const name = cleanText(source?.name, 100);
+    const position = Number(source?.position);
+    const quantity = Number(source?.quantity);
+    const unit = cleanText(source?.unit, 30);
+    if (!Number.isInteger(id) || id <= 0 || !name) return [];
+    if (!Number.isFinite(quantity) || quantity <= 0 || !unit) return [];
+    return [{
+      id,
+      name,
+      position: Number.isInteger(position) && position >= 0 ? position : 999,
+      quantity,
+      unit,
+    }];
+  });
+}
+
+function addRequirement(requirements, quantity, unit) {
+  const existing = requirements.find(
+    (requirement) => requirement.unit.toLocaleLowerCase() === unit.toLocaleLowerCase()
+  );
+  if (existing) existing.quantity += quantity;
+  else requirements.push({ quantity, unit });
+}
+
+function addRecipeSource(recipes, source) {
+  const existing = recipes.find(
+    (candidate) => candidate.id === source.id
+      && candidate.unit.toLocaleLowerCase() === source.unit.toLocaleLowerCase()
+  );
+  if (existing) existing.quantity += source.quantity;
+  else recipes.push({ ...source });
+}
+
 function normalizedItems(value, mappings) {
   if (!Array.isArray(value)) return [];
   const normalized = [];
@@ -116,13 +153,11 @@ function normalizedItems(value, mappings) {
     const unit = cleanText(item?.unit, 30);
     if (!Number.isInteger(id) || id <= 0 || !name) return;
     if (!Number.isFinite(quantity) || quantity <= 0 || !unit) return;
+    const recipes = normalizedRecipeSources(item?.recipes);
     const existing = byId.get(id);
     if (existing) {
-      const sameUnit = existing.requirements.find(
-        (requirement) => requirement.unit.toLocaleLowerCase() === unit.toLocaleLowerCase()
-      );
-      if (sameUnit) sameUnit.quantity += quantity;
-      else existing.requirements.push({ quantity, unit });
+      addRequirement(existing.requirements, quantity, unit);
+      recipes.forEach((source) => addRecipeSource(existing.recipes, source));
       return;
     }
     const mapping = mappings[String(id)] || {};
@@ -138,6 +173,7 @@ function normalizedItems(value, mappings) {
       requiredQuantity: quantity,
       requiredUnit: unit,
       requirements: [{ quantity, unit }],
+      recipes,
       included: true,
       productUrl,
       productTitle,
